@@ -16,6 +16,7 @@ from .api.edit_user_routes import router as edit_user_router
 from .api.view_user_routes import router as view_user_router
 from .api.inactivate_user_routes import router as inactivate_user_router
 from .api.activate_user_routes import router as activate_user_router
+from .api.internal_user_routes import router as internal_user_router
 
 # Configure logging
 logging.basicConfig(
@@ -70,6 +71,7 @@ app.include_router(edit_user_router)
 app.include_router(view_user_router)
 app.include_router(inactivate_user_router)
 app.include_router(activate_user_router)
+app.include_router(internal_user_router)
 
 
 @app.get("/api/v1/health", tags=["Health"])
