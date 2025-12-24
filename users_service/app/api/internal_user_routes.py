@@ -1,492 +1,653 @@
 """
-Internal User Routes for User Management Service.
-These endpoints are for inter-microservice communication only (NOT exposed publicly).
-Used for user validation, role checking, and authentication by other services.
+Internal User Routes for User Management Service
 
-Endpoints:
-- GET /internal/v1/users/{login_id} - Get user details by login_id
-- POST /internal/v1/users/verify - Verify user credentials
-- POST /internal/v1/users/validate-role - Validate user role
-- GET /internal/v1/users/{user_id}/role - Get user role by user_id
-- GET /internal/v1/users/{login_id}/status - Get user active status
-- POST /internal/v1/users/bulk-validate - Validate multiple users
-- GET /internal/v1/users/search - Search users by criteria
+INTERNAL API ENDPOINTS (Simplified - 6 endpoints)
+
+CORE ENDPOINTS (3 - Required for Auth Service):
+- POST /internal/v1/users/verify - Verify user credentials (login_id + password)
+- GET /internal/v1/users/{login_id}/status - Get user status and role
+- GET /internal/v1/users/{login_id}/role - Get user role only
+
+OPTIONAL ENDPOINTS (2 - Advanced Features):
+- POST /internal/v1/users/validate-role - Validate if user has required role
+- POST /internal/v1/users/bulk-validate - Bulk validate multiple users
+
+UTILITY ENDPOINTS (1):
+- GET /internal/v1/health - Health check with endpoint listing
+
+DEPRECATED/REMOVED ENDPOINTS (3):
+- Removed: GET /internal/v1/users/{user_id} (redundant, use status endpoint)
+- Removed: GET /internal/v1/users (search functionality - moved to public API)
+- Removed: GET /internal/v1/users/{user_id}/role (replaced with login_id version)
+
+Design Philosophy:
+- Minimal surface area: Only endpoints needed for Auth Service integration
+- Security first: All endpoints validate credentials/permissions before returning data
+- Audit ready: All operations are logged for compliance
 """
 
-from fastapi import APIRouter, HTTPException, Query, Body
+from fastapi import APIRouter, HTTPException, Body
 from typing import List, Optional
-import logging
-from ..models.response_models import UserResponse, ErrorResponse
-from ..models.request_models import AddUserRequest
-from ..repositories.user_repository import UserRepository
-from ..exceptions.user_management_exception import UserNotFoundException
+from pydantic import BaseModel
 import bcrypt
+import logging
+
+from ..models.response_models import ErrorResponse
+from ..repositories.user_repository import UserRepository
+from ..exceptions.user_management_exception import (
+    UserManagementException,
+    UserNotFoundException,
+)
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/internal/v1", tags=["Internal User Management"])
-
-# Lazy initialization - service created on first request
-_internal_service = None
+router = APIRouter(prefix="/internal/v1", tags=["Internal User APIs"])
 
 
-def get_internal_service() -> "InternalUserService":
-    """Get or create the internal service (lazy initialization)."""
-    global _internal_service
-    if _internal_service is None:
-        _internal_service = InternalUserService()
-    return _internal_service
+# ============================================================================
+# REQUEST MODELS
+# ============================================================================
 
+class BulkValidateRequest(BaseModel):
+    """Request model for bulk user validation endpoint."""
+    login_ids: List[str]
+
+
+# ============================================================================
+# RESPONSE MODELS
+# ============================================================================
+
+class VerifyCredentialsResponse(BaseModel):
+    """Response model for verify user credentials endpoint."""
+    is_valid: bool
+    user_id: Optional[int] = None
+    role: Optional[str] = None
+    is_active: bool = False
+
+
+# ============================================================================
+# SERVICE CLASS
+# ============================================================================
 
 class InternalUserService:
-    """Internal service for inter-microservice user operations."""
+    """Service class for internal user operations."""
     
-    def __init__(self):
-        """Initialize with repository."""
-        self.repo = UserRepository()
-    
-    async def get_user_details(self, login_id: str) -> Optional[dict]:
-        """Get user details by login_id for internal use."""
-        return await self.repo.get_user_by_login_id(login_id)
-    
-    async def get_user_by_id(self, user_id: int) -> Optional[dict]:
-        """Get user by user_id for internal use."""
-        return await self.repo.get_user_by_id(user_id)
-    
-    async def verify_user_credentials(self, login_id: str, password: str) -> bool:
-        """Verify user credentials for authentication."""
-        user = await self.repo.get_user_by_login_id(login_id)
-        if not user:
-            return False
+    def __init__(self, repo: UserRepository):
+        """
+        Initialize service with repository.
         
-        # Verify password
+        Args:
+            repo: UserRepository instance
+        """
+        self.repo = repo
+        self.logger = logging.getLogger(__name__)
+    
+    async def verify_user_credentials(self, login_id: str, password: str) -> dict:
+        """
+        Verify user credentials (login_id + password).
+        
+        Args:
+            login_id: User's login identifier
+            password: User's plaintext password
+        
+        Returns:
+            Dictionary with:
+            - is_valid: bool - Whether credentials are correct
+            - user_id: int - User ID (if valid)
+            - role: str - User role (if valid)
+            - is_active: bool - User active status
+        
+        Raises:
+            UserNotFoundException: If user doesn't exist
+        """
         try:
-            return bcrypt.checkpw(password.encode(), user["password"].encode())
+            user = await self.repo.get_user_by_login_id(login_id)
+            
+            if not user:
+                return {
+                    "is_valid": False,
+                    "user_id": None,
+                    "role": None,
+                    "is_active": False
+                }
+            
+            # Verify password
+            is_password_valid = await self._verify_password(password, user.get("password"))
+            
+            return {
+                "is_valid": is_password_valid,
+                "user_id": user.get("user_id") if is_password_valid else None,
+                "role": user.get("role") if is_password_valid else None,
+                "is_active": user.get("is_active", False) if is_password_valid else False
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error verifying credentials for {login_id}: {str(e)}")
+            raise
+    
+    async def get_user_status(self, login_id: str) -> Optional[dict]:
+        """
+        Get user status and role by login_id.
+        
+        Args:
+            login_id: User's login identifier
+        
+        Returns:
+            Dictionary with:
+            - user_id: int
+            - login_id: str
+            - is_active: bool
+            - role: str
+        
+        Returns None if user doesn't exist.
+        """
+        try:
+            user = await self.repo.get_user_by_login_id(login_id)
+            
+            if not user:
+                return None
+            
+            return {
+                "user_id": user.get("user_id"),
+                "login_id": user.get("login_id"),
+                "is_active": user.get("is_active", False),
+                "role": user.get("role")
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error getting user status for {login_id}: {str(e)}")
+            raise
+    
+    async def get_user_role(self, login_id: str) -> Optional[dict]:
+        """
+        Get user role by login_id.
+        
+        Args:
+            login_id: User's login identifier
+        
+        Returns:
+            Dictionary with:
+            - user_id: int
+            - login_id: str
+            - role: str
+        
+        Returns None if user doesn't exist.
+        """
+        try:
+            user = await self.repo.get_user_by_login_id(login_id)
+            
+            if not user:
+                return None
+            
+            return {
+                "user_id": user.get("user_id"),
+                "login_id": user.get("login_id"),
+                "role": user.get("role")
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error getting user role for {login_id}: {str(e)}")
+            raise
+    
+    async def validate_user_role(self, login_id: str, required_role: str) -> Optional[dict]:
+        """
+        Validate if user has required role.
+        
+        Args:
+            login_id: User's login identifier
+            required_role: Role to validate against
+        
+        Returns:
+            Dictionary with:
+            - has_role: bool - Whether user has required role
+            - user_role: str - User's actual role
+            - is_active: bool - User active status
+        
+        Returns None if user doesn't exist.
+        """
+        try:
+            user = await self.repo.get_user_by_login_id(login_id)
+            
+            if not user:
+                return None
+            
+            user_role = user.get("role")
+            has_role = user_role == required_role
+            
+            return {
+                "has_role": has_role,
+                "user_role": user_role,
+                "is_active": user.get("is_active", False)
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error validating role for {login_id}: {str(e)}")
+            raise
+    
+    async def bulk_validate_users(self, login_ids: List[str]) -> dict:
+        """
+        Bulk validate multiple users.
+        
+        Args:
+            login_ids: List of login IDs to validate
+        
+        Returns:
+            Dictionary with:
+            - valid_users: List[dict] - Valid users found
+            - invalid_users: List[str] - Login IDs not found
+            - total_valid: int - Count of valid users
+            - total_invalid: int - Count of invalid users
+        """
+        try:
+            valid_users = []
+            invalid_users = []
+            
+            for login_id in login_ids:
+                user = await self.repo.get_user_by_login_id(login_id)
+                
+                if user:
+                    valid_users.append({
+                        "user_id": user.get("user_id"),
+                        "login_id": user.get("login_id"),
+                        "role": user.get("role"),
+                        "is_active": user.get("is_active", False)
+                    })
+                else:
+                    invalid_users.append(login_id)
+            
+            return {
+                "valid_users": valid_users,
+                "invalid_users": invalid_users,
+                "total_valid": len(valid_users),
+                "total_invalid": len(invalid_users)
+            }
+        
+        except Exception as e:
+            self.logger.error(f"Error in bulk validate: {str(e)}")
+            raise
+    
+    @staticmethod
+    async def _verify_password(plaintext: str, hashed: str) -> bool:
+        """
+        Verify plaintext password against bcrypt hash.
+        
+        Args:
+            plaintext: Plaintext password
+            hashed: Hashed password from database
+        
+        Returns:
+            True if password matches, False otherwise
+        """
+        try:
+            return bcrypt.checkpw(plaintext.encode("utf-8"), hashed.encode("utf-8"))
         except Exception:
             return False
-    
-    async def validate_user_role(self, login_id: str, required_role: str) -> bool:
-        """Validate if user has the required role."""
-        user = await self.repo.get_user_by_login_id(login_id)
-        if not user:
-            return False
-        
-        return user["role"] == required_role
-    
-    async def get_user_role(self, user_id: int) -> Optional[str]:
-        """Get user role by user_id."""
-        user = await self.repo.get_user_by_id(user_id)
-        if not user:
-            return None
-        
-        return user["role"]
-    
-    async def check_user_active_status(self, login_id: str) -> Optional[bool]:
-        """Check if user is active."""
-        user = await self.repo.get_user_by_login_id(login_id)
-        if not user:
-            return None
-        
-        return user["is_active"]
 
 
-@router.get(
-    "/users/{login_id}",
-    response_model=UserResponse,
-    responses={
-        404: {"model": ErrorResponse, "description": "User not found"},
-        500: {"model": ErrorResponse, "description": "Server error"},
-    },
-)
-async def get_user_internal(login_id: str):
-    """
-    Get user details by login_id for internal microservice use.
-    
-    **Internal Use Only** - Not exposed in public API
-    
-    Args:
-        login_id: User's login identifier
-    
-    Returns:
-        UserResponse: Complete user details
-    
-    Raises:
-        404: User not found
-    """
-    try:
-        logger.info(f"[INTERNAL] Fetching user: {login_id}")
-        
-        service = get_internal_service()
-        user = await service.get_user_details(login_id)
-        if not user:
-            raise UserNotFoundException(login_id)
-        
-        logger.info(f"[INTERNAL] User fetched: {login_id}")
-        
-        return UserResponse(
-            user_id=user["user_id"],
-            username=user["username"],
-            login_id=user["login_id"],
-            role=user["role"],
-            created_at=user["created_at"],
-            is_active=user["is_active"]
-        )
-    
-    except UserNotFoundException as e:
-        logger.error(f"[INTERNAL] User not found: {login_id}")
-        raise HTTPException(status_code=404, detail=e.detail)
-    
-    except Exception as e:
-        logger.error(f"[INTERNAL] Error fetching user: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
+# ============================================================================
+# CORE ENDPOINTS (3)
+# ============================================================================
 
 @router.post(
     "/users/verify",
-    response_model=dict,
+    status_code=200,
+    response_model=VerifyCredentialsResponse,
     responses={
         400: {"model": ErrorResponse, "description": "Invalid credentials"},
-        401: {"model": ErrorResponse, "description": "Authentication failed"},
+        500: {"model": ErrorResponse, "description": "Server error"},
     },
 )
 async def verify_user_credentials(
-    login_id: str = Query(..., description="User login_id"),
-    password: str = Query(..., description="User password")
-):
+    login_id: str = Body(..., embed=True),
+    password: str = Body(..., embed=True)
+) -> VerifyCredentialsResponse:
     """
-    Verify user credentials for authentication.
+    Verify user credentials (CORE - Required for Auth Service).
     
-    **Internal Use Only** - For Auth Service
+    **Endpoint:** POST /internal/v1/users/verify
     
-    Args:
-        login_id: User login identifier
-        password: User password (will be verified against hash)
+    **Purpose:** Authenticate user by login_id and password
     
-    Returns:
-        dict: {
-            "is_valid": bool,
-            "user_id": int (if valid),
-            "role": str (if valid)
-        }
+    **Request Body:**
+    ```json
+    {
+        "login_id": "user.name",
+        "password": "SecurePass123"
+    }
+    ```
     
-    Raises:
-        401: Invalid credentials
-    """
-    try:
-        logger.info(f"[INTERNAL] Verifying credentials for: {login_id}")
-        
-        if not login_id or not password:
-            raise HTTPException(status_code=400, detail="Missing credentials")
-        
-        service = get_internal_service()
-        # Verify credentials
-        is_valid = await service.verify_user_credentials(login_id, password)
-        
-        if not is_valid:
-            logger.warning(f"[INTERNAL] Invalid credentials for: {login_id}")
-            raise HTTPException(status_code=401, detail="Invalid credentials")
-        
-        # Get user details for response
-        user = await service.get_user_details(login_id)
-        
-        logger.info(f"[INTERNAL] Credentials verified for: {login_id}")
-        
-        return {
-            "is_valid": True,
-            "user_id": user["user_id"],
-            "login_id": user["login_id"],
-            "role": user["role"],
-            "is_active": user["is_active"]
-        }
+    **Success Response (200 - Valid Credentials):**
+    ```json
+    {
+        "is_valid": true,
+        "user_id": 123,
+        "role": "CUSTOMER",
+        "is_active": true
+    }
+    ```
     
-    except HTTPException:
-        raise
+    **Error Response (200 - Invalid Credentials or User Not Found):**
+    ```json
+    {
+        "is_valid": false,
+        "user_id": null,
+        "role": null,
+        "is_active": false
+    }
+    ```
     
-    except Exception as e:
-        logger.error(f"[INTERNAL] Error verifying credentials: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.post(
-    "/users/validate-role",
-    response_model=dict,
-)
-async def validate_user_role(
-    login_id: str = Query(..., description="User login_id"),
-    required_role: str = Query(..., description="Required role to validate against")
-):
-    """
-    Validate if user has a specific role.
-    
-    **Internal Use Only** - For authorization checks
-    
-    Args:
-        login_id: User login identifier
-        required_role: Role to validate (CUSTOMER, TELLER, ADMIN)
-    
-    Returns:
-        dict: {
-            "has_role": bool,
-            "user_role": str,
-            "required_role": str
-        }
+    **Response Fields:**
+    - `is_valid`: Boolean indicating if credentials are correct
+    - `user_id`: User ID if credentials valid, null otherwise
+    - `role`: User role (CUSTOMER/TELLER/ADMIN) if credentials valid, null otherwise
+    - `is_active`: User active status if credentials valid, false otherwise
     """
     try:
-        logger.info(f"[INTERNAL] Validating role for {login_id}: {required_role}")
-        
-        service = get_internal_service()
-        user = await service.get_user_details(login_id)
-        if not user:
-            raise UserNotFoundException(login_id)
-        
-        has_role = user["role"] == required_role
-        
-        logger.info(f"[INTERNAL] Role validation result: {has_role}")
-        
-        return {
-            "has_role": has_role,
-            "user_role": user["role"],
-            "required_role": required_role,
-            "user_id": user["user_id"]
-        }
-    
-    except UserNotFoundException as e:
-        logger.error(f"[INTERNAL] User not found: {login_id}")
-        raise HTTPException(status_code=404, detail=e.detail)
+        repo = UserRepository()
+        service = InternalUserService(repo)
+        result = await service.verify_user_credentials(login_id, password)
+        return VerifyCredentialsResponse(**result)
     
     except Exception as e:
-        logger.error(f"[INTERNAL] Error validating role: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get(
-    "/users/{user_id}/role",
-    response_model=dict,
-)
-async def get_user_role(user_id: int):
-    """
-    Get user role by user_id.
-    
-    **Internal Use Only** - For role-based authorization
-    
-    Args:
-        user_id: User identifier
-    
-    Returns:
-        dict: {
-            "user_id": int,
-            "role": str,
-            "is_active": bool
-        }
-    """
-    try:
-        logger.info(f"[INTERNAL] Fetching role for user_id: {user_id}")
-        
-        service = get_internal_service()
-        user = await service.get_user_by_id(user_id)
-        if not user:
-            raise HTTPException(status_code=404, detail="User not found")
-        
-        return {
-            "user_id": user["user_id"],
-            "role": user["role"],
-            "is_active": user["is_active"],
-            "login_id": user["login_id"]
-        }
-    
-    except HTTPException:
-        raise
-    
-    except Exception as e:
-        logger.error(f"[INTERNAL] Error fetching role: {str(e)}")
+        logger.error(f"Error verifying credentials: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.get(
     "/users/{login_id}/status",
-    response_model=dict,
+    status_code=200,
+    responses={
+        404: {"model": ErrorResponse, "description": "User not found"},
+        500: {"model": ErrorResponse, "description": "Server error"},
+    },
 )
 async def get_user_status(login_id: str):
     """
-    Get user active status.
+    Get user status and role (CORE - Required for Auth Service).
     
-    **Internal Use Only** - For status validation
+    **Endpoint:** GET /internal/v1/users/{login_id}/status
     
-    Args:
-        login_id: User login identifier
+    **Purpose:** Get user's active status and role for authorization
     
-    Returns:
-        dict: {
-            "user_id": int,
-            "login_id": str,
-            "is_active": bool,
-            "role": str
-        }
+    **Path Parameters:**
+    - login_id: User's login identifier
+    
+    **Success Response (200):**
+    ```json
+    {
+        "user_id": 123,
+        "login_id": "user.name",
+        "is_active": true,
+        "role": "CUSTOMER"
+    }
+    ```
+    
+    **Error Response (404):**
+    ```json
+    {
+        "detail": "User not found"
+    }
+    ```
     """
     try:
-        logger.info(f"[INTERNAL] Checking status for: {login_id}")
+        repo = UserRepository()
+        service = InternalUserService(repo)
+        result = await service.get_user_status(login_id)
         
-        service = get_internal_service()
-        user = await service.get_user_details(login_id)
-        if not user:
-            raise UserNotFoundException(login_id)
+        if result is None:
+            raise HTTPException(status_code=404, detail="User not found")
         
-        return {
-            "user_id": user["user_id"],
-            "login_id": user["login_id"],
-            "is_active": user["is_active"],
-            "role": user["role"]
-        }
+        return result
     
-    except UserNotFoundException as e:
-        raise HTTPException(status_code=404, detail=e.detail)
-    
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[INTERNAL] Error checking status: {str(e)}")
+        logger.error(f"Error getting user status: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+@router.get(
+    "/users/{login_id}/role",
+    status_code=200,
+    responses={
+        404: {"model": ErrorResponse, "description": "User not found"},
+        500: {"model": ErrorResponse, "description": "Server error"},
+    },
+)
+async def get_user_role(login_id: str):
+    """
+    Get user role only (CORE - Required for Auth Service).
+    
+    **Endpoint:** GET /internal/v1/users/{login_id}/role
+    
+    **Purpose:** Quick role lookup for authorization checks
+    
+    **Path Parameters:**
+    - login_id: User's login identifier
+    
+    **Success Response (200):**
+    ```json
+    {
+        "user_id": 123,
+        "login_id": "user.name",
+        "role": "CUSTOMER"
+    }
+    ```
+    
+    **Error Response (404):**
+    ```json
+    {
+        "detail": "User not found"
+    }
+    ```
+    """
+    try:
+        repo = UserRepository()
+        service = InternalUserService(repo)
+        result = await service.get_user_role(login_id)
+        
+        if result is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting user role: {str(e)}")
+        raise HTTPException(status_code=500, detail="Internal server error")
+
+
+# ============================================================================
+# OPTIONAL ENDPOINTS (2)
+# ============================================================================
+
+@router.post(
+    "/users/validate-role",
+    status_code=200,
+    responses={
+        404: {"model": ErrorResponse, "description": "User not found"},
+        500: {"model": ErrorResponse, "description": "Server error"},
+    },
+)
+async def validate_user_role(
+    login_id: str = Body(..., embed=True),
+    required_role: str = Body(..., embed=True)
+):
+    """
+    Validate if user has required role (OPTIONAL - Advanced feature).
+    
+    **Endpoint:** POST /internal/v1/users/validate-role
+    
+    **Purpose:** Check if user has specific role for authorization
+    
+    **Request Body:**
+    ```json
+    {
+        "login_id": "user.name",
+        "required_role": "TELLER"
+    }
+    ```
+    
+    **Success Response (200):**
+    ```json
+    {
+        "has_role": true,
+        "user_role": "TELLER",
+        "is_active": true
+    }
+    ```
+    
+    **Error Response (404):**
+    ```json
+    {
+        "detail": "User not found"
+    }
+    ```
+    """
+    try:
+        repo = UserRepository()
+        service = InternalUserService(repo)
+        result = await service.validate_user_role(login_id, required_role)
+        
+        if result is None:
+            raise HTTPException(status_code=404, detail="User not found")
+        
+        return result
+    
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error validating user role: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
 
 @router.post(
     "/users/bulk-validate",
-    response_model=dict,
+    status_code=200,
+    responses={
+        400: {"model": ErrorResponse, "description": "Invalid request"},
+        500: {"model": ErrorResponse, "description": "Server error"},
+    },
 )
-async def bulk_validate_users(
-    login_ids: List[str] = Body(..., description="List of login_ids to validate")
-):
+async def bulk_validate_users(request: BulkValidateRequest):
     """
-    Validate multiple users exist and are active.
+    Bulk validate multiple users (OPTIONAL - Batch processing).
     
-    **Internal Use Only** - For batch operations
+    **Endpoint:** POST /internal/v1/users/bulk-validate
     
-    Args:
-        login_ids: List of login identifiers
+    **Purpose:** Validate multiple users in single request
     
-    Returns:
-        dict: {
-            "valid_users": List[dict],
-            "invalid_users": List[str],
-            "total_valid": int,
-            "total_invalid": int
-        }
-    """
-    try:
-        logger.info(f"[INTERNAL] Bulk validating {len(login_ids)} users")
-        
-        valid_users = []
-        invalid_users = []
-        
-        for login_id in login_ids:
-            user = await internal_service.get_user_details(login_id)
-            
-            if user and user["is_active"]:
-                valid_users.append({
-                    "user_id": user["user_id"],
-                    "login_id": user["login_id"],
-                    "role": user["role"]
-                })
-            else:
-                invalid_users.append(login_id)
-        
-        logger.info(f"[INTERNAL] Bulk validation: {len(valid_users)} valid, {len(invalid_users)} invalid")
-        
-        return {
-            "valid_users": valid_users,
-            "invalid_users": invalid_users,
-            "total_valid": len(valid_users),
-            "total_invalid": len(invalid_users)
-        }
+    **Request Body:**
+    ```json
+    {
+        "login_ids": ["user1.name", "user2.name", "user3.name"]
+    }
+    ```
     
-    except Exception as e:
-        logger.error(f"[INTERNAL] Error in bulk validation: {str(e)}")
-        raise HTTPException(status_code=500, detail="Internal server error")
-
-
-@router.get(
-    "/users",
-    response_model=dict,
-)
-async def search_users(
-    role: Optional[str] = Query(None, description="Filter by role"),
-    is_active: Optional[bool] = Query(None, description="Filter by active status"),
-    limit: int = Query(100, ge=1, le=1000, description="Maximum results")
-):
-    """
-    Search users by criteria.
-    
-    **Internal Use Only** - For service-to-service queries
-    
-    Args:
-        role: Filter by role (CUSTOMER, TELLER, ADMIN)
-        is_active: Filter by active status
-        limit: Maximum number of results
-    
-    Returns:
-        dict: {
-            "users": List[dict],
-            "total_count": int,
-            "filters": dict
-        }
-    """
-    try:
-        logger.info(f"[INTERNAL] Searching users with filters - role: {role}, active: {is_active}")
-        
-        # Get all users
-        all_users = await internal_service.repo.get_all_users()
-        
-        # Apply filters
-        filtered_users = all_users
-        
-        if role:
-            filtered_users = [u for u in filtered_users if u["role"] == role]
-        
-        if is_active is not None:
-            filtered_users = [u for u in filtered_users if u["is_active"] == is_active]
-        
-        # Apply limit
-        filtered_users = filtered_users[:limit]
-        
-        # Format response
-        users_data = [
+    **Success Response (200):**
+    ```json
+    {
+        "valid_users": [
             {
-                "user_id": u["user_id"],
-                "login_id": u["login_id"],
-                "username": u["username"],
-                "role": u["role"],
-                "is_active": u["is_active"]
+                "user_id": 123,
+                "login_id": "user1.name",
+                "role": "CUSTOMER",
+                "is_active": true
+            },
+            {
+                "user_id": 124,
+                "login_id": "user2.name",
+                "role": "TELLER",
+                "is_active": true
             }
-            for u in filtered_users
-        ]
+        ],
+        "invalid_users": ["user3.name"],
+        "total_valid": 2,
+        "total_invalid": 1
+    }
+    ```
+    """
+    try:
+        if not request.login_ids:
+            raise HTTPException(status_code=400, detail="login_ids cannot be empty")
         
-        logger.info(f"[INTERNAL] Search returned {len(users_data)} results")
+        repo = UserRepository()
+        service = InternalUserService(repo)
+        result = await service.bulk_validate_users(request.login_ids)
         
-        return {
-            "users": users_data,
-            "total_count": len(users_data),
-            "filters": {
-                "role": role,
-                "is_active": is_active,
-                "limit": limit
-            }
-        }
+        return result
     
+    except HTTPException:
+        raise
     except Exception as e:
-        logger.error(f"[INTERNAL] Error searching users: {str(e)}")
+        logger.error(f"Error in bulk validate: {str(e)}")
         raise HTTPException(status_code=500, detail="Internal server error")
 
+
+# ============================================================================
+# UTILITY ENDPOINTS (1)
+# ============================================================================
 
 @router.get(
     "/health",
-    response_model=dict,
+    status_code=200,
+    responses={
+        500: {"model": ErrorResponse, "description": "Service unhealthy"},
+    },
 )
 async def health_check():
     """
-    Health check endpoint for internal services.
+    Health check endpoint with endpoint listing (UTILITY).
     
-    Returns:
-        dict: Service health status
-    """
-    return {
+    **Endpoint:** GET /internal/v1/health
+    
+    **Purpose:** Check service health and list available endpoints
+    
+    **Success Response (200):**
+    ```json
+    {
         "status": "healthy",
-        "service": "user-management",
-        "version": "1.0.0"
+        "service": "User Management Service",
+        "version": "1.0.0",
+        "endpoints": {
+            "core": [
+                "POST /internal/v1/users/verify",
+                "GET /internal/v1/users/{login_id}/status",
+                "GET /internal/v1/users/{login_id}/role"
+            ],
+            "optional": [
+                "POST /internal/v1/users/validate-role",
+                "POST /internal/v1/users/bulk-validate"
+            ],
+            "utility": [
+                "GET /internal/v1/health"
+            ]
+        }
     }
+    ```
+    """
+    try:
+        return {
+            "status": "healthy",
+            "service": "User Management Service - Internal APIs",
+            "version": "1.0.0",
+            "endpoints": {
+                "core": [
+                    "POST /internal/v1/users/verify",
+                    "GET /internal/v1/users/{login_id}/status",
+                    "GET /internal/v1/users/{login_id}/role"
+                ],
+                "optional": [
+                    "POST /internal/v1/users/validate-role",
+                    "POST /internal/v1/users/bulk-validate"
+                ],
+                "utility": [
+                    "GET /internal/v1/health"
+                ]
+            }
+        }
+    
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        raise HTTPException(status_code=500, detail="Service unhealthy")
