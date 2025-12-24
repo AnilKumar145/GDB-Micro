@@ -11,9 +11,10 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import asyncpg
 from app.database.db import database
-from app.models.enums import TransactionType, TransactionStatus
+from app.models.enums import TransactionType
 
 logger = logging.getLogger(__name__)
+
 
 
 class TransactionRepository:
@@ -25,23 +26,19 @@ class TransactionRepository:
         to_account: Optional[int],
         amount: Decimal,
         transaction_type: TransactionType,
-        status: TransactionStatus,
         description: Optional[str] = None,
         idempotency_key: Optional[str] = None,
-        error_message: Optional[str] = None
     ) -> int:
         """
-        Create a new transaction record.
+        Create a new transaction record in fund_transfers table.
         
         Args:
-            from_account: Source account (None for deposit)
-            to_account: Destination account (None for withdrawal)
+            from_account: Source account
+            to_account: Destination account
             amount: Transaction amount
             transaction_type: Type of transaction
-            status: Transaction status
             description: Transaction description
             idempotency_key: For idempotency
-            error_message: Error message if failed
             
         Returns:
             transaction_id of created record
@@ -49,26 +46,24 @@ class TransactionRepository:
         query = """
             INSERT INTO fund_transfers (
                 from_account, to_account, transfer_amount,
-                transaction_type, status, description,
-                idempotency_key, error_message, created_at
+                transfer_mode, created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
-            RETURNING transaction_id
+            VALUES ($1, $2, $3, $4, $5)
+            RETURNING id
         """
         
         try:
             conn = await database.get_connection()
             try:
+                # All transactions use NEFT as default transfer mode
+                transfer_mode = "NEFT"
+                
                 transaction_id = await conn.fetchval(
                     query,
                     from_account,
                     to_account,
                     float(amount),
-                    transaction_type.value,
-                    status.value,
-                    description,
-                    idempotency_key,
-                    error_message,
+                    transfer_mode,
                     datetime.utcnow()
                 )
                 logger.info(f"✅ Transaction {transaction_id} created")
@@ -157,32 +152,29 @@ class TransactionRepository:
     @staticmethod
     async def update_transaction_status(
         transaction_id: int,
-        status: TransactionStatus,
         error_message: Optional[str] = None
     ) -> bool:
         """
-        Update transaction status.
+        Update transaction (currently only updates_at timestamp).
         
         Args:
             transaction_id: Transaction to update
-            status: New status
-            error_message: Error message if failed
+            error_message: Unused (kept for compatibility)
             
         Returns:
             True if updated successfully
         """
         query = """
             UPDATE fund_transfers
-            SET status = $1, error_message = $2
-            WHERE transaction_id = $3
+            SET updated_at = $1
+            WHERE id = $2
         """
         
         conn = await database.get_connection()
         try:
             result = await conn.execute(
                 query,
-                status.value,
-                error_message,
+                datetime.utcnow(),
                 transaction_id
             )
             return True

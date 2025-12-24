@@ -14,7 +14,13 @@ class TransactionException(Exception):
     error_code: str = "TRANSACTION_ERROR"
     
     def __init__(self, message: str, error_code: Optional[str] = None):
-        """Initialize exception."""
+        """
+        Initialize transaction exception.
+        
+        Args:
+            message: Human-readable error message
+            error_code: Error code for categorization
+        """
         super().__init__(message)
         self.message = message
         if error_code:
@@ -173,3 +179,56 @@ class AccountServiceException(TransactionException):
     
     http_code = 502
     error_code = "ACCOUNT_SERVICE_ERROR"
+
+
+# ========================================
+# ADDITIONAL SPECIFIC EXCEPTIONS
+# ========================================
+
+class InvalidTransferModeException(TransactionException):
+    """Invalid transfer mode specified."""
+    
+    http_code = 400
+    error_code = "INVALID_TRANSFER_MODE"
+
+
+class DailyAmountLimitException(TransactionException):
+    """Daily amount limit exceeded."""
+    
+    http_code = 400
+    error_code = "DAILY_AMOUNT_LIMIT_EXCEEDED"
+
+
+class InvalidTransactionException(TransactionException):
+    """Invalid transaction parameters."""
+    
+    http_code = 400
+    error_code = "INVALID_TRANSACTION"
+
+
+class TransactionLoggingException(TransactionException):
+    """Transaction logging operation failed."""
+    
+    http_code = 500
+    error_code = "TRANSACTION_LOGGING_ERROR"
+
+
+class SourceAccountInactiveException(TransactionException):
+    """Source account is inactive."""
+    
+    http_code = 400
+    error_code = "SOURCE_ACCOUNT_INACTIVE"
+
+
+class DestinationAccountInactiveException(TransactionException):
+    """Destination account is inactive."""
+    
+    http_code = 400
+    error_code = "DESTINATION_ACCOUNT_INACTIVE"
+
+
+class BothAccountsInactiveException(TransactionException):
+    """Both source and destination accounts are inactive."""
+    
+    http_code = 400
+    error_code = "BOTH_ACCOUNTS_INACTIVE"

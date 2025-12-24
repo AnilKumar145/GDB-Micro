@@ -1,10 +1,7 @@
 """
-Transaction Log API Routes (FE015-FE019)
+Transaction Log API Routes
 
 GET /api/v1/transaction-logs/{account} - Get logs for account
-GET /api/v1/transaction-logs/transaction/{transaction_id} - Get logs for transaction
-GET /api/v1/transaction-logs/date/{date} - Get logs for specific date
-GET /api/v1/transaction-logs/summary/{account} - Get transaction summary
 """
 
 import logging
@@ -12,7 +9,7 @@ from datetime import datetime
 from typing import Optional
 
 from fastapi import APIRouter, HTTPException, status, Query
-from app.models.response_models import TransactionLogResponse, ErrorResponse
+from app.models import TransactionLoggingResponse
 from app.services.transaction_log_service import transaction_log_service
 from app.exceptions.transaction_exceptions import TransactionException
 
@@ -26,8 +23,8 @@ router = APIRouter(prefix="/api/v1", tags=["transaction-logs"])
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "Transaction logs retrieved"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
 async def get_transaction_logs(
@@ -116,8 +113,8 @@ async def get_transaction_logs(
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "Transaction logs retrieved"},
-        404: {"model": ErrorResponse, "description": "Transaction not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Transaction not found"},
+        503: {"description": "Service unavailable"},
     },
 )
 async def get_logs_by_reference_id(reference_id: str):
@@ -163,17 +160,17 @@ async def get_logs_by_reference_id(reference_id: str):
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "File logs retrieved"},
-        404: {"model": ErrorResponse, "description": "Logs not found for date"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Logs not found for date"},
+        503: {"description": "Service unavailable"},
     },
 )
-async def get_file_logs(date: str = Query(..., description="Date in YYYY-MM-DD format")):
+async def get_file_logs(date: str):
     """
     Get file-based transaction logs for a specific date.
 
     Useful for auditing and debugging.
 
-    **Query Parameters:**
+    **Path Parameters:**
     - date: Date to read logs for (YYYY-MM-DD format)
 
     **Response:**
@@ -222,8 +219,8 @@ async def get_file_logs(date: str = Query(..., description="Date in YYYY-MM-DD f
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "Summary stats retrieved"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
 async def get_transaction_summary(

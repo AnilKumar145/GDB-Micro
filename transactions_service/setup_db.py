@@ -31,90 +31,51 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-# SQL Schemas
+# SQL Schemas - Simplified for transaction tracking
 CREATE_FUND_TRANSFERS_TABLE = """
 CREATE TABLE IF NOT EXISTS fund_transfers (
-    id SERIAL PRIMARY KEY,
-    transaction_id UUID UNIQUE NOT NULL DEFAULT gen_random_uuid(),
-    account_number VARCHAR(50) NOT NULL,
-    transaction_type VARCHAR(20) NOT NULL,
-    amount DECIMAL(15, 2) NOT NULL CHECK (amount > 0),
-    balance_after DECIMAL(15, 2),
-    status VARCHAR(20) NOT NULL DEFAULT 'PENDING',
-    description VARCHAR(500),
-    reference_number VARCHAR(100),
-    from_account VARCHAR(50),
-    to_account VARCHAR(50),
-    transfer_mode VARCHAR(20),
-    encrypted_pin VARCHAR(255),
-    created_by VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    deleted_at TIMESTAMP,
-    idempotency_key VARCHAR(255) UNIQUE,
+    id BIGSERIAL PRIMARY KEY,
+    from_account BIGINT NOT NULL,
+    to_account BIGINT NOT NULL,
+    transfer_amount NUMERIC(15, 2) NOT NULL,
+    transfer_mode VARCHAR(20) NOT NULL,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     
-    -- Indexes for common queries
-    CONSTRAINT chk_transaction_type CHECK (transaction_type IN ('DEPOSIT', 'WITHDRAW', 'TRANSFER')),
-    CONSTRAINT chk_status CHECK (status IN ('PENDING', 'COMPLETED', 'FAILED', 'CANCELLED')),
-    CONSTRAINT chk_transfer_mode CHECK (transfer_mode IS NULL OR transfer_mode IN ('NEFT', 'RTGS', 'IMPS', 'UPI'))
+    -- Constraints
+    CONSTRAINT chk_transfer_amount CHECK (transfer_amount > 0),
+    CONSTRAINT chk_from_not_equal_to CHECK (from_account <> to_account),
+    CONSTRAINT chk_transfer_mode CHECK (
+        transfer_mode IN ('NEFT', 'RTGS', 'IMPS', 'UPI')
+    )
 );
 
--- Create indexes for better query performance
-CREATE INDEX IF NOT EXISTS idx_fund_transfers_account_number ON fund_transfers(account_number);
-CREATE INDEX IF NOT EXISTS idx_fund_transfers_transaction_type ON fund_transfers(transaction_type);
-CREATE INDEX IF NOT EXISTS idx_fund_transfers_status ON fund_transfers(status);
+-- Indexes for fund_transfers
+CREATE INDEX IF NOT EXISTS idx_fund_transfers_from_account ON fund_transfers(from_account);
+CREATE INDEX IF NOT EXISTS idx_fund_transfers_to_account ON fund_transfers(to_account);
 CREATE INDEX IF NOT EXISTS idx_fund_transfers_created_at ON fund_transfers(created_at);
-CREATE INDEX IF NOT EXISTS idx_fund_transfers_transaction_id ON fund_transfers(transaction_id);
-CREATE INDEX IF NOT EXISTS idx_fund_transfers_idempotency_key ON fund_transfers(idempotency_key);
 """
 
-CREATE_TRANSACTION_LOGS_TABLE = """
-CREATE TABLE IF NOT EXISTS transaction_logs (
-    id SERIAL PRIMARY KEY,
-    fund_transfer_id INTEGER NOT NULL REFERENCES fund_transfers(id) ON DELETE CASCADE,
-    account_number VARCHAR(50) NOT NULL,
+CREATE_TRANSACTION_LOGGING_TABLE = """
+CREATE TABLE IF NOT EXISTS transaction_logging (
+    id BIGSERIAL PRIMARY KEY,
+    account_number BIGINT NOT NULL,
+    amount NUMERIC(15, 2) NOT NULL,
     transaction_type VARCHAR(20) NOT NULL,
-    amount DECIMAL(15, 2) NOT NULL,
-    status VARCHAR(20) NOT NULL,
-    log_type VARCHAR(50) NOT NULL,
-    log_message TEXT,
-    error_code VARCHAR(50),
-    error_message TEXT,
-    source VARCHAR(100),
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     
-    -- Indexes for better query performance
-    CONSTRAINT chk_log_type CHECK (log_type IN ('INFO', 'WARNING', 'ERROR', 'DEBUG', 'AUDIT'))
+    -- Constraints
+    CONSTRAINT chk_transaction_amount CHECK (amount > 0),
+    CONSTRAINT chk_transaction_type CHECK (
+        transaction_type IN ('WITHDRAW', 'DEPOSIT', 'TRANSFER')
+    )
 );
 
--- Create indexes for transaction logs
-CREATE INDEX IF NOT EXISTS idx_transaction_logs_fund_transfer_id ON transaction_logs(fund_transfer_id);
-CREATE INDEX IF NOT EXISTS idx_transaction_logs_account_number ON transaction_logs(account_number);
-CREATE INDEX IF NOT EXISTS idx_transaction_logs_created_at ON transaction_logs(created_at);
-CREATE INDEX IF NOT EXISTS idx_transaction_logs_log_type ON transaction_logs(log_type);
-"""
-
-CREATE_TRANSFER_LIMITS_TABLE = """
-CREATE TABLE IF NOT EXISTS transfer_limits (
-    id SERIAL PRIMARY KEY,
-    account_number VARCHAR(50) NOT NULL UNIQUE,
-    privilege_level VARCHAR(20) NOT NULL,
-    daily_limit DECIMAL(15, 2) NOT NULL,
-    daily_transaction_count INTEGER NOT NULL,
-    current_day_amount DECIMAL(15, 2) DEFAULT 0,
-    current_day_transaction_count INTEGER DEFAULT 0,
-    last_reset_date DATE DEFAULT CURRENT_DATE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    
-    CONSTRAINT chk_privilege_level CHECK (privilege_level IN ('PREMIUM', 'GOLD', 'SILVER', 'BASIC')),
-    CONSTRAINT chk_amounts_positive CHECK (daily_limit > 0 AND current_day_amount >= 0)
-);
-
--- Create indexes for transfer limits
-CREATE INDEX IF NOT EXISTS idx_transfer_limits_account_number ON transfer_limits(account_number);
-CREATE INDEX IF NOT EXISTS idx_transfer_limits_privilege_level ON transfer_limits(privilege_level);
-CREATE INDEX IF NOT EXISTS idx_transfer_limits_last_reset_date ON transfer_limits(last_reset_date);
+-- Indexes for transaction_logging
+CREATE INDEX IF NOT EXISTS idx_transaction_logging_account ON transaction_logging(account_number);
+CREATE INDEX IF NOT EXISTS idx_transaction_logging_type ON transaction_logging(transaction_type);
+CREATE INDEX IF NOT EXISTS idx_transaction_logging_created_at ON transaction_logging(created_at);
 """
 
 
@@ -189,15 +150,10 @@ async def create_tables():
         await connection.execute(CREATE_FUND_TRANSFERS_TABLE)
         logger.info("✅ fund_transfers table created successfully")
         
-        # Create transaction_logs table
-        logger.info("📋 Creating transaction_logs table...")
-        await connection.execute(CREATE_TRANSACTION_LOGS_TABLE)
-        logger.info("✅ transaction_logs table created successfully")
-        
-        # Create transfer_limits table
-        logger.info("📋 Creating transfer_limits table...")
-        await connection.execute(CREATE_TRANSFER_LIMITS_TABLE)
-        logger.info("✅ transfer_limits table created successfully")
+        # Create transaction_logging table
+        logger.info("📋 Creating transaction_logging table...")
+        await connection.execute(CREATE_TRANSACTION_LOGGING_TABLE)
+        logger.info("✅ transaction_logging table created successfully")
         
         logger.info("\n" + "="*60)
         logger.info("🎉 All tables created successfully!")

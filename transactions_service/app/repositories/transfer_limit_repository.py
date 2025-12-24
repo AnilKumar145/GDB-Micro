@@ -19,48 +19,72 @@ class TransferLimitRepository:
     """Repository for transfer limit operations."""
 
     @staticmethod
+    async def get_transfer_rule(privilege: str) -> Optional[Dict[str, Any]]:
+        """
+        Get transfer limit rule for a privilege level.
+        Uses hardcoded rules (no database table needed).
+        
+        Args:
+            privilege: Privilege level (PREMIUM, GOLD, SILVER)
+            
+        Returns:
+            Dict with daily_limit and transaction_limit
+        """
+        rules = {
+            "PREMIUM": {
+                "daily_limit": 100000,      # ₹100,000 per day
+                "transaction_limit": 50     # 50 transfers per day
+            },
+            "GOLD": {
+                "daily_limit": 50000,       # ₹50,000 per day
+                "transaction_limit": 25     # 25 transfers per day
+            },
+            "SILVER": {
+                "daily_limit": 25000,       # ₹25,000 per day
+                "transaction_limit": 10     # 10 transfers per day
+            }
+        }
+        
+        return rules.get(privilege.upper())
+
+    @staticmethod
     async def get_daily_used_amount(
         account_number: int,
         date: Optional[datetime] = None
     ) -> Decimal:
         """
-        Get total amount transferred today.
+        Get total amount transferred today from the account.
+        Queries fund_transfers table for all transactions from this account.
         
         Args:
             account_number: Account number
             date: Date to check (defaults to today)
             
         Returns:
-            Total amount used today
+            Total amount transferred today
         """
-        if not date:
-            date = datetime.utcnow()
+        if date is None:
+            date = datetime.utcnow().date()
         
-        start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + timedelta(days=1)
-        
-        query = """
-            SELECT COALESCE(SUM(transfer_amount), 0) as total
-            FROM fund_transfers
-            WHERE from_account = $1
-            AND transaction_type = 'TRANSFER'
-            AND status = 'SUCCESS'
-            AND created_at >= $2
-            AND created_at < $3
-        """
-        
-        conn = await database.get_connection()
         try:
-            row = await conn.fetchrow(
-                query,
-                account_number,
-                start_of_day,
-                end_of_day
-            )
-            total = row['total'] if row else Decimal('0')
-            return Decimal(str(total))
-        finally:
-            await database._pool.release(conn)
+            conn = await database.get_connection()
+            try:
+                query = """
+                    SELECT COALESCE(SUM(transfer_amount), 0) as total
+                    FROM fund_transfers
+                    WHERE from_account = $1
+                    AND DATE(created_at) = $2
+                """
+                result = await conn.fetchrow(query, account_number, date)
+                total = Decimal(str(result['total'])) if result else Decimal('0')
+                logger.info(f"💰 Daily used amount for account {account_number}: ₹{total}")
+                return total
+            finally:
+                await database._pool.release(conn)
+        except Exception as e:
+            logger.error(f"❌ Error getting daily used amount: {str(e)}")
+            return Decimal('0')
+
 
     @staticmethod
     async def get_daily_transaction_count(
@@ -68,7 +92,8 @@ class TransferLimitRepository:
         date: Optional[datetime] = None
     ) -> int:
         """
-        Get number of transfers today.
+        Get number of transfers today from the account.
+        Queries fund_transfers table for all transactions from this account.
         
         Args:
             account_number: Account number
@@ -77,116 +102,25 @@ class TransferLimitRepository:
         Returns:
             Number of transactions today
         """
-        if not date:
-            date = datetime.utcnow()
-        
-        start_of_day = date.replace(hour=0, minute=0, second=0, microsecond=0)
-        end_of_day = start_of_day + timedelta(days=1)
-        
-        query = """
-            SELECT COUNT(*) as count
-            FROM fund_transfers
-            WHERE from_account = $1
-            AND transaction_type = 'TRANSFER'
-            AND status = 'SUCCESS'
-            AND created_at >= $2
-            AND created_at < $3
-        """
-        
-        conn = await database.get_connection()
-        try:
-            row = await conn.fetchrow(
-                query,
-                account_number,
-                start_of_day,
-                end_of_day
-            )
-            return row['count'] if row else 0
-        finally:
-            await database._pool.release(conn)
-
-    @staticmethod
-    async def get_transfer_rule(privilege_level: str) -> Optional[Dict[str, Any]]:
-        """
-        Get transfer limit rules for a privilege level.
-        
-        Args:
-            privilege_level: Privilege level (PREMIUM, GOLD, SILVER, BASIC)
-            
-        Returns:
-            Transfer rule dict or None
-        """
-        query = """
-            SELECT * FROM transfer_rules
-            WHERE privilege_level = $1
-        """
-        
-        conn = await database.get_connection()
-        try:
-            row = await conn.fetchrow(query, privilege_level)
-            return dict(row) if row else None
-        finally:
-            await database._pool.release(conn)
-
-    @staticmethod
-    async def create_transfer_rule(
-        privilege_level: str,
-        daily_limit: Decimal,
-        daily_transaction_count: int
-    ) -> bool:
-        """
-        Create or update a transfer rule.
-        
-        Args:
-            privilege_level: Privilege level
-            daily_limit: Daily transfer limit
-            daily_transaction_count: Daily transaction count limit
-            
-        Returns:
-            True if successful
-        """
-        query = """
-            INSERT INTO transfer_rules (
-                privilege_level, daily_limit, daily_transaction_count, created_at
-            )
-            VALUES ($1, $2, $3, $4)
-            ON CONFLICT (privilege_level)
-            DO UPDATE SET
-                daily_limit = $2,
-                daily_transaction_count = $3
-        """
+        if date is None:
+            date = datetime.utcnow().date()
         
         try:
             conn = await database.get_connection()
             try:
-                await conn.execute(
-                    query,
-                    privilege_level,
-                    float(daily_limit),
-                    daily_transaction_count,
-                    datetime.utcnow()
-                )
-                logger.info(f"✅ Transfer rule for {privilege_level} created/updated")
-                return True
+                query = """
+                    SELECT COUNT(*) as cnt
+                    FROM fund_transfers
+                    WHERE from_account = $1
+                    AND DATE(created_at) = $2
+                """
+                result = await conn.fetchrow(query, account_number, date)
+                count = result['cnt'] if result else 0
+                logger.info(f"📊 Daily transaction count for account {account_number}: {count}")
+                return count
             finally:
                 await database._pool.release(conn)
         except Exception as e:
-            logger.error(f"❌ Failed to create transfer rule: {str(e)}")
-            return False
+            logger.error(f"❌ Error getting daily transaction count: {str(e)}")
+            return 0
 
-    @staticmethod
-    async def get_all_transfer_rules() -> list[Dict[str, Any]]:
-        """
-        Get all transfer rules.
-        
-        Returns:
-            List of transfer rules
-        """
-        query = "SELECT * FROM transfer_rules ORDER BY daily_limit DESC"
-        
-        conn = await database.get_connection()
-        try:
-            rows = await conn.fetch(query)
-            return [dict(row) for row in rows]
-        finally:
-            await database._pool.release(conn)

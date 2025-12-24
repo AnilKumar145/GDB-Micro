@@ -1,5 +1,5 @@
 """
-Transfer API Routes (FE012)
+Transfer API Routes
 
 POST /api/v1/transfers - Transfer funds between accounts
 """
@@ -8,9 +8,7 @@ import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, status
-from app.models.request_models import TransferRequest
-from app.models.response_models import TransferResponse, ErrorResponse
-from app.models.enums import TransferMode
+from app.models import FundTransferCreate, FundTransferResponse, TransferMode
 from app.services.transfer_service import transfer_service
 from app.exceptions.transaction_exceptions import TransactionException
 
@@ -21,26 +19,32 @@ router = APIRouter(prefix="/api/v1", tags=["transfers"])
 
 @router.post(
     "/transfers",
-    response_model=TransferResponse,
     status_code=status.HTTP_201_CREATED,
     responses={
-        201: {"model": TransferResponse, "description": "Transfer successful"},
-        400: {"model": ErrorResponse, "description": "Invalid input or limit exceeded"},
-        401: {"model": ErrorResponse, "description": "Invalid PIN"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        201: {"description": "Transfer successful"},
+        400: {"description": "Invalid input or limit exceeded"},
+        401: {"description": "Invalid PIN"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
-async def transfer_funds(request: TransferRequest) -> TransferResponse:
+async def transfer_funds(
+    from_account: int,
+    to_account: int,
+    amount: float,
+    pin: str,
+    transfer_mode: str = "NEFT",
+    description: str = None
+) -> dict:
     """
     Transfer funds between two accounts.
 
-    **Request Body:**
+    **Query Parameters:**
     - from_account: Source account
     - to_account: Destination account
     - amount: Amount to transfer (min 1, max 10,00,000)
     - pin: 4-digit PIN for authorization
-    - transfer_mode: NEFT/RTGS/IMPS/INTERNAL (default: INTERNAL)
+    - transfer_mode: NEFT/RTGS/IMPS (default: NEFT)
     - description: Optional description
 
     **Response:**
@@ -61,30 +65,30 @@ async def transfer_funds(request: TransferRequest) -> TransferResponse:
     - 503: Account Service unavailable
     """
     logger.info(
-        f"💳 Transfer request - From: {request.from_account}, "
-        f"To: {request.to_account}, Amount: ₹{request.amount}"
+        f"💳 Transfer request - From: {from_account}, "
+        f"To: {to_account}, Amount: ₹{amount}"
     )
 
     try:
         # Determine transfer mode
-        transfer_mode = TransferMode[request.transfer_mode.upper()] if request.transfer_mode else TransferMode.INTERNAL
+        transfer_mode_enum = TransferMode[transfer_mode.upper()] if transfer_mode else TransferMode.NEFT
 
         # Call transfer service
         result = await transfer_service.process_transfer(
-            from_account=request.from_account,
-            to_account=request.to_account,
-            amount=Decimal(str(request.amount)),
-            pin=request.pin,
-            transfer_mode=transfer_mode,
-            description=request.description,
+            from_account=from_account,
+            to_account=to_account,
+            amount=Decimal(str(amount)),
+            pin=pin,
+            transfer_mode=transfer_mode_enum,
+            description=description,
         )
 
         logger.info(
-            f"✅ Transfer successful - From: {request.from_account}, "
-            f"To: {request.to_account}"
+            f"✅ Transfer successful - From: {from_account}, "
+            f"To: {to_account}"
         )
 
-        return TransferResponse(**result)
+        return result
 
     except TransactionException as e:
         # All transaction exceptions are mapped to appropriate HTTP codes

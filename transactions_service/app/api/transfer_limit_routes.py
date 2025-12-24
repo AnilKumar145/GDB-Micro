@@ -1,17 +1,13 @@
 """
-Transfer Limit API Routes (FE013, FE014)
+Transfer Limit API Routes
 
 GET /api/v1/transfer-limits/{account} - Get transfer limits
-GET /api/v1/transfer-limits/rules/all - Get all transfer rules
-POST /api/v1/transfer-limits/check - Check if transfer is possible
 """
 
 import logging
 from decimal import Decimal
 
 from fastapi import APIRouter, HTTPException, status, Query
-from app.models.response_models import TransferLimitResponse, ErrorResponse
-from app.models.request_models import TransferLimitRequest
 from app.services.transfer_limit_service import transfer_limit_service
 from app.exceptions.transaction_exceptions import TransactionException
 
@@ -22,15 +18,14 @@ router = APIRouter(prefix="/api/v1", tags=["transfer-limits"])
 
 @router.get(
     "/transfer-limits/{account_number}",
-    response_model=TransferLimitResponse,
     status_code=status.HTTP_200_OK,
     responses={
-        200: {"model": TransferLimitResponse, "description": "Transfer limits retrieved"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        200: {"description": "Transfer limits retrieved"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
-async def get_transfer_limit(account_number: int) -> TransferLimitResponse:
+async def get_transfer_limit(account_number: int) -> dict:
     """
     Get transfer limits for an account.
 
@@ -58,7 +53,7 @@ async def get_transfer_limit(account_number: int) -> TransferLimitResponse:
     try:
         result = await transfer_limit_service.get_transfer_limit(account_number)
         logger.info(f"✅ Transfer limits retrieved for account {account_number}")
-        return TransferLimitResponse(**result)
+        return result
 
     except TransactionException as e:
         logger.warning(f"⚠️ Failed to get transfer limits: {e.error_code}")
@@ -80,8 +75,8 @@ async def get_transfer_limit(account_number: int) -> TransferLimitResponse:
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "Remaining limits retrieved"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
 async def get_remaining_limit(account_number: int):
@@ -127,7 +122,7 @@ async def get_remaining_limit(account_number: int):
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "All transfer rules retrieved"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        503: {"description": "Service unavailable"},
     },
 )
 async def get_all_transfer_rules():
@@ -166,17 +161,17 @@ async def get_all_transfer_rules():
     status_code=status.HTTP_200_OK,
     responses={
         200: {"description": "Transfer feasibility checked"},
-        404: {"model": ErrorResponse, "description": "Account not found"},
-        503: {"model": ErrorResponse, "description": "Service unavailable"},
+        404: {"description": "Account not found"},
+        503: {"description": "Service unavailable"},
     },
 )
-async def check_can_transfer(request: TransferLimitRequest):
+async def check_can_transfer(account_number: int, amount: float):
     """
     Check if an account can make a transfer of given amount.
 
     Quick validation before initiating transfer.
 
-    **Request Body:**
+    **Query Parameters:**
     - account_number: Account to check
     - amount: Proposed transfer amount
 
@@ -191,16 +186,16 @@ async def check_can_transfer(request: TransferLimitRequest):
     - 503: Service unavailable
     """
     logger.info(
-        f"❓ Check if can transfer - Account: {request.account_number}, "
-        f"Amount: ₹{request.amount}"
+        f"❓ Check if can transfer - Account: {account_number}, "
+        f"Amount: ₹{amount}"
     )
 
     try:
         result = await transfer_limit_service.check_can_transfer(
-            account_number=request.account_number,
-            proposed_amount=Decimal(str(request.amount)),
+            account_number=account_number,
+            proposed_amount=Decimal(str(amount)),
         )
-        logger.info(f"✅ Transfer check completed for account {request.account_number}")
+        logger.info(f"✅ Transfer check completed for account {account_number}")
         return result
 
     except TransactionException as e:
@@ -215,4 +210,61 @@ async def check_can_transfer(request: TransferLimitRequest):
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error_code": "INTERNAL_ERROR", "message": "Internal server error"},
+        )
+
+
+@router.get(
+    "/transfer-limits/debug/fund-transfers/{account_number}",
+    status_code=status.HTTP_200_OK,
+)
+async def debug_fund_transfers(account_number: int):
+    """
+    DEBUG ENDPOINT: Show all fund_transfers for an account today.
+    Used to debug transfer limit validation.
+    """
+    from app.database.db import database
+    from datetime import datetime
+    
+    logger.info(f"🔍 DEBUG: Getting fund_transfers for account {account_number}")
+    
+    try:
+        conn = await database.get_connection()
+        try:
+            today = datetime.utcnow().date()
+            
+            query = """
+                SELECT id, from_account, to_account, transfer_amount, transfer_mode, created_at
+                FROM fund_transfers
+                WHERE from_account = $1
+                AND DATE(created_at) = $2
+                ORDER BY created_at DESC
+            """
+            records = await conn.fetch(query, account_number, today)
+            
+            total = sum(r['transfer_amount'] for r in records) if records else 0
+            
+            return {
+                "account_number": account_number,
+                "date": str(today),
+                "total_transferred": float(total),
+                "transaction_count": len(records),
+                "records": [
+                    {
+                        "id": r['id'],
+                        "from_account": r['from_account'],
+                        "to_account": r['to_account'],
+                        "amount": float(r['transfer_amount']),
+                        "mode": r['transfer_mode'],
+                        "created_at": r['created_at'].isoformat()
+                    }
+                    for r in records
+                ]
+            }
+        finally:
+            await database._pool.release(conn)
+    except Exception as e:
+        logger.error(f"❌ Debug error: {str(e)}")
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail={"error": str(e)},
         )

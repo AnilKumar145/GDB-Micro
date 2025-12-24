@@ -32,7 +32,7 @@ from app.exceptions.transaction_exceptions import (
     TransferLimitExceededException,
     DailyTransactionCountExceededException,
 )
-from app.models.enums import TransactionType, TransactionStatus, TransferMode
+from app.models.enums import TransactionType, TransferMode
 from app.validation.validators import (
     AmountValidator,
     BalanceValidator,
@@ -64,7 +64,7 @@ class TransferService:
         to_account: int,
         amount: Decimal,
         pin: str,
-        transfer_mode: TransferMode = TransferMode.INTERNAL,
+        transfer_mode: TransferMode = TransferMode.NEFT,
         description: Optional[str] = None,
         idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
@@ -78,17 +78,16 @@ class TransferService:
         4. Validate amount
         5. Check source account balance
         6. Check privilege and daily transfer limits
-        7. Create transaction record
-        8. Debit source account, credit destination account
-        9. Log transaction to DB and file
-        10. Return transaction details
+        7. Debit source account, credit destination account
+        8. Log transaction to DB and file
+        9. Return transaction details
 
         Args:
             from_account: Source account
             to_account: Destination account
             amount: Transfer amount
             pin: Account PIN for authorization
-            transfer_mode: NEFT, RTGS, IMPS, INTERNAL, etc.
+            transfer_mode: NEFT, RTGS, IMPS, etc.
             description: Optional description
             idempotency_key: For idempotency
 
@@ -107,8 +106,6 @@ class TransferService:
             TransferFailedException: If transfer fails
             ServiceUnavailableException: If Account Service is down
         """
-        transaction_id = None
-
         try:
             # STEP 1: Validate both accounts exist and are active (CRITICAL)
             logger.info(f"📋 Validating from account {from_account}")
@@ -147,19 +144,7 @@ class TransferService:
                 privilege, daily_used, daily_count, amount
             )
 
-            # STEP 7: Create transaction record
-            logger.info(f"📝 Creating transaction record")
-            transaction_id = await self.transaction_repo.create_transaction(
-                from_account=from_account,
-                to_account=to_account,
-                amount=amount,
-                transaction_type=TransactionType.TRANSFER,
-                status=TransactionStatus.PENDING,
-                description=description,
-                idempotency_key=idempotency_key,
-            )
-
-            # STEP 8: Debit source and credit destination via Account Service
+            # STEP 7: Debit source and credit destination via Account Service
             logger.info(f"💳 Debiting source account {from_account}")
             debit_result = await self.account_client.debit_account(
                 account_number=from_account,
@@ -179,27 +164,29 @@ class TransferService:
             from_new_balance = debit_result.get("new_balance", 0)
             to_new_balance = credit_result.get("new_balance", 0)
 
-            # STEP 9: Update transaction status to SUCCESS
-            await self.transaction_repo.update_transaction_status(
-                transaction_id, TransactionStatus.SUCCESS
+            # STEP 8: Log transaction to database - CREATE fund_transfers record FIRST
+            transaction_id = await self.transaction_repo.create_transaction(
+                from_account=from_account,
+                to_account=to_account,
+                amount=float(amount),
+                transaction_type=TransactionType.TRANSFER,
+                description=description or f"Transfer from {from_account} to {to_account}",
             )
 
-            # STEP 10: Log to database
+            # STEP 9: Log to transaction_logging
             await self.log_repo.log_to_database(
                 account_number=from_account,
-                amount=amount,
+                amount=float(amount),
                 transaction_type=TransactionType.TRANSFER,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
 
-            # STEP 11: Log to file
+            # STEP 10: Log to file
             self.log_repo.log_to_file(
                 account_number=from_account,
-                amount=amount,
+                amount=float(amount),
                 transaction_type=TransactionType.TRANSFER,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
@@ -230,32 +217,16 @@ class TransferService:
             TransferLimitExceededException,
             DailyTransactionCountExceededException,
         ):
-            # Log failed transaction
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except ServiceUnavailableException:
-            # Account Service is down
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except Exception as e:
             # Unexpected error
             logger.error(f"❌ Transfer failed: {str(e)}")
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id,
-                    TransactionStatus.FAILED,
-                    error_message=str(e),
-                )
-
             raise TransferFailedException(f"Transfer failed: {str(e)}")
+
 
 
 # Singleton instance

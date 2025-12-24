@@ -26,7 +26,7 @@ from app.exceptions.transaction_exceptions import (
     ServiceUnavailableException,
     InsufficientFundsException,
 )
-from app.models.enums import TransactionType, TransactionStatus
+from app.models.enums import TransactionType
 from app.validation.validators import (
     AmountValidator,
     BalanceValidator,
@@ -64,10 +64,9 @@ class WithdrawService:
         3. Verify PIN via Account Service
         4. Validate amount
         5. Check sufficient balance
-        6. Create transaction record
-        7. Debit account via Account Service
-        8. Log transaction to DB and file
-        9. Return transaction details
+        6. Debit account via Account Service
+        7. Log transaction to DB and file
+        8. Return transaction details
 
         Args:
             account_number: Account to withdraw from
@@ -87,8 +86,6 @@ class WithdrawService:
             WithdrawalFailedException: If withdrawal fails
             ServiceUnavailableException: If Account Service is down
         """
-        transaction_id = None
-
         try:
             # STEP 1: Validate account exists and is active (CRITICAL)
             logger.info(f"📋 Validating account {account_number}")
@@ -111,18 +108,7 @@ class WithdrawService:
             current_balance = account_data.get("balance", 0)
             BalanceValidator.validate_sufficient_balance(current_balance, float(amount))
 
-            # STEP 6: Create transaction record
-            logger.info(f"📝 Creating transaction record")
-            transaction_id = await self.transaction_repo.create_transaction(
-                from_account=account_number,
-                to_account=None,  # Withdrawal has no destination
-                amount=amount,
-                transaction_type=TransactionType.WITHDRAW,
-                status=TransactionStatus.PENDING,
-                description=description,
-            )
-
-            # STEP 7: Debit account via Account Service
+            # STEP 6: Debit account via Account Service
             logger.info(f"💳 Debiting account {account_number}")
             debit_result = await self.account_client.debit_account(
                 account_number=account_number,
@@ -132,27 +118,30 @@ class WithdrawService:
 
             new_balance = debit_result.get("new_balance", 0)
 
-            # STEP 8: Update transaction status to SUCCESS
-            await self.transaction_repo.update_transaction_status(
-                transaction_id, TransactionStatus.SUCCESS
+            # STEP 7: Log transaction to database - CREATE fund_transfers record FIRST
+            # For withdrawals: from_account=withdrawing account, to_account=0 (system)
+            transaction_id = await self.transaction_repo.create_transaction(
+                from_account=account_number,
+                to_account=0,
+                amount=float(amount),
+                transaction_type=TransactionType.WITHDRAW,
+                description=description or "Withdrawal",
             )
 
-            # STEP 9: Log to database
+            # STEP 8: Log to transaction_logging
             await self.log_repo.log_to_database(
                 account_number=account_number,
-                amount=amount,
+                amount=float(amount),
                 transaction_type=TransactionType.WITHDRAW,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
 
-            # STEP 10: Log to file
+            # STEP 9: Log to file
             self.log_repo.log_to_file(
                 account_number=account_number,
-                amount=amount,
+                amount=float(amount),
                 transaction_type=TransactionType.WITHDRAW,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
@@ -177,32 +166,16 @@ class WithdrawService:
             InvalidAmountException,
             InsufficientFundsException,
         ):
-            # Log failed transaction
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except ServiceUnavailableException:
-            # Account Service is down
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except Exception as e:
             # Unexpected error
             logger.error(f"❌ Withdrawal failed: {str(e)}")
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id,
-                    TransactionStatus.FAILED,
-                    error_message=str(e),
-                )
-
             raise WithdrawalFailedException(f"Withdrawal failed: {str(e)}")
+
 
 
 # Singleton instance

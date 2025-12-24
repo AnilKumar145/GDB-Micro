@@ -30,26 +30,27 @@ class AccountServiceClient:
 
     async def validate_account(self, account_number: int) -> Dict[str, Any]:
         """
-        Validate account exists and is active.
+        Validate account exists and is active using INTERNAL API.
         
         MANDATORY CALL before any transaction operation.
+        Uses service-to-service internal endpoint.
         
         Args:
             account_number: Account to validate
             
         Returns:
             Account details dict with keys:
-            - accountNumber
-            - isActive
+            - account_number
+            - is_active
             - balance
-            - privilege (PREMIUM/GOLD/SILVER/BASIC)
+            - privilege (PREMIUM/GOLD/SILVER)
             
         Raises:
             AccountNotFoundException: If account doesn't exist
             AccountNotActiveException: If account is not active
             ServiceUnavailableException: If Account Service is down
         """
-        endpoint = f"{self.base_url}/api/v1/accounts/{account_number}/validation"
+        endpoint = f"{self.base_url}/api/v1/internal/accounts/{account_number}"
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
@@ -64,7 +65,7 @@ class AccountServiceClient:
                     data = response.json()
                     
                     # Check if account is active
-                    if not data.get("isActive", False):
+                    if not data.get("is_active", False):
                         raise AccountNotActiveException(
                             f"Account {account_number} is not active"
                         )
@@ -89,9 +90,10 @@ class AccountServiceClient:
 
     async def verify_pin(self, account_number: int, pin: str) -> bool:
         """
-        Verify account PIN.
+        Verify account PIN using INTERNAL API.
         
         MANDATORY for withdraw and transfer operations.
+        Uses service-to-service internal endpoint.
         
         Args:
             account_number: Account number
@@ -105,13 +107,13 @@ class AccountServiceClient:
             AccountNotFoundException: If account doesn't exist
             ServiceUnavailableException: If Account Service is down
         """
-        endpoint = f"{self.base_url}/api/v1/accounts/{account_number}/verify-pin"
+        endpoint = f"{self.base_url}/api/v1/internal/accounts/{account_number}/verify-pin"
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(
                     endpoint,
-                    json={"pin": pin}
+                    params={"pin": pin}
                 )
                 
                 if response.status_code == 404:
@@ -125,7 +127,8 @@ class AccountServiceClient:
                     )
                 
                 if response.status_code == 200:
-                    return response.json().get("valid", False)
+                    data = response.json()
+                    return data.get("pin_valid", False)
                 
                 raise AccountServiceException(
                     f"PIN verification failed: {response.text}"
@@ -144,7 +147,7 @@ class AccountServiceClient:
         idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Debit amount from account (for withdrawal/transfer).
+        Debit amount from account (for withdrawal/transfer) using INTERNAL API.
         
         Args:
             account_number: Account to debit
@@ -153,27 +156,26 @@ class AccountServiceClient:
             idempotency_key: For retry safety
             
         Returns:
-            Account data after debit
+            Account data after debit with key 'new_balance'
             
         Raises:
             InsufficientFundsException: If not enough balance
             ServiceUnavailableException: If Account Service is down
         """
-        endpoint = f"{self.base_url}/api/v1/accounts/{account_number}/debit"
+        endpoint = f"{self.base_url}/api/v1/internal/accounts/{account_number}/debit"
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                headers = {}
+                params = {
+                    "amount": amount,
+                    "description": description
+                }
                 if idempotency_key:
-                    headers["Idempotency-Key"] = idempotency_key
+                    params["idempotency_key"] = idempotency_key
                 
                 response = await client.post(
                     endpoint,
-                    json={
-                        "amount": amount,
-                        "description": description
-                    },
-                    headers=headers
+                    params=params
                 )
                 
                 if response.status_code == 200:
@@ -199,7 +201,7 @@ class AccountServiceClient:
         idempotency_key: Optional[str] = None
     ) -> Dict[str, Any]:
         """
-        Credit amount to account (for deposit/transfer).
+        Credit amount to account (for deposit/transfer) using INTERNAL API.
         
         Args:
             account_number: Account to credit
@@ -208,26 +210,25 @@ class AccountServiceClient:
             idempotency_key: For retry safety
             
         Returns:
-            Account data after credit
+            Account data after credit with key 'new_balance'
             
         Raises:
             ServiceUnavailableException: If Account Service is down
         """
-        endpoint = f"{self.base_url}/api/v1/accounts/{account_number}/credit"
+        endpoint = f"{self.base_url}/api/v1/internal/accounts/{account_number}/credit"
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
-                headers = {}
+                params = {
+                    "amount": amount,
+                    "description": description
+                }
                 if idempotency_key:
-                    headers["Idempotency-Key"] = idempotency_key
+                    params["idempotency_key"] = idempotency_key
                 
                 response = await client.post(
                     endpoint,
-                    json={
-                        "amount": amount,
-                        "description": description
-                    },
-                    headers=headers
+                    params=params
                 )
                 
                 if response.status_code == 200:
@@ -244,22 +245,23 @@ class AccountServiceClient:
 
     async def get_account_privilege(self, account_number: int) -> str:
         """
-        Get account privilege level.
+        Get account privilege level using INTERNAL API.
         
         Args:
             account_number: Account number
             
         Returns:
-            Privilege level (PREMIUM/GOLD/SILVER/BASIC)
+            Privilege level (PREMIUM/GOLD/SILVER)
         """
-        endpoint = f"{self.base_url}/api/v1/accounts/{account_number}/privilege"
+        endpoint = f"{self.base_url}/api/v1/internal/accounts/{account_number}/privilege"
         
         try:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(endpoint)
                 
                 if response.status_code == 200:
-                    return response.json().get("privilege", "BASIC")
+                    data = response.json()
+                    return data.get("privilege", "SILVER")
                 
                 raise ServiceUnavailableException(
                     "Could not fetch account privilege"

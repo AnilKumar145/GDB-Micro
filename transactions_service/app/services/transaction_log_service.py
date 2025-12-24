@@ -20,7 +20,7 @@ from app.exceptions.transaction_exceptions import (
     TransactionLogNotFoundException,
     AccountNotFoundException,
 )
-from app.models.enums import TransactionType, TransactionStatus
+from app.models.enums import TransactionType
 from app.repositories.transaction_log_repository import TransactionLogRepository
 from app.integration.account_service_client import account_service_client
 
@@ -76,7 +76,7 @@ class TransactionLogService:
         await self.account_client.validate_account(account_number)
 
         # STEP 2: Get logs from database
-        logs = await self.log_repo.get_account_logs(
+        logs, total_count = await self.log_repo.get_account_logs(
             account_number=account_number,
             skip=skip,
             limit=limit,
@@ -92,20 +92,19 @@ class TransactionLogService:
             "account_number": account_number,
             "logs": [
                 {
-                    "log_id": log.get("log_id"),
+                    "id": log.get("id"),
                     "account_number": log.get("account_number"),
                     "amount": float(log.get("amount", 0)),
                     "transaction_type": log.get("transaction_type"),
-                    "status": log.get("status"),
-                    "reference_id": log.get("reference_id"),
-                    "description": log.get("description"),
-                    "created_at": log.get("created_at", "").isoformat() if log.get("created_at") else None,
+                    "created_at": log.get("created_at").isoformat() if log.get("created_at") else None,
+                    "updated_at": log.get("updated_at").isoformat() if log.get("updated_at") else None,
                 }
                 for log in logs
             ],
             "skip": skip,
             "limit": limit,
             "has_more": has_more,
+            "total_count": total_count,
         }
 
     async def get_logs_by_date_range(
@@ -252,7 +251,7 @@ class TransactionLogService:
         await self.account_client.validate_account(account_number)
 
         # Get all logs for period
-        logs = await self.log_repo.get_account_logs(
+        logs, total_count = await self.log_repo.get_account_logs(
             account_number=account_number,
             skip=0,
             limit=10000,  # Get all

@@ -22,7 +22,7 @@ from app.exceptions.transaction_exceptions import (
     DepositFailedException,
     ServiceUnavailableException,
 )
-from app.models.enums import TransactionType, TransactionStatus
+from app.models.enums import TransactionType
 from app.validation.validators import AmountValidator
 from app.integration.account_service_client import account_service_client
 from app.repositories.transaction_repository import TransactionRepository
@@ -52,9 +52,9 @@ class DepositService:
         CRITICAL FLOW:
         1. Validate account exists and is active via Account Service
         2. Validate amount
-        3. Create transaction record
-        4. Credit account via Account Service
-        5. Log transaction to DB and file
+        3. Credit account via Account Service
+        4. Create transaction record
+        5. Log transaction to file
         6. Return transaction details
 
         Args:
@@ -72,8 +72,6 @@ class DepositService:
             DepositFailedException: If deposit fails
             ServiceUnavailableException: If Account Service is down
         """
-        transaction_id = None
-
         try:
             # STEP 1: Validate account exists and is active (CRITICAL)
             logger.info(f"📋 Validating account {account_number}")
@@ -83,18 +81,7 @@ class DepositService:
             logger.info(f"💰 Validating amount: ₹{amount}")
             AmountValidator.validate_deposit_amount(amount)
 
-            # STEP 3: Create transaction record
-            logger.info(f"📝 Creating transaction record")
-            transaction_id = await self.transaction_repo.create_transaction(
-                from_account=None,  # Deposit has no source
-                to_account=account_number,
-                amount=amount,
-                transaction_type=TransactionType.DEPOSIT,
-                status=TransactionStatus.PENDING,
-                description=description,
-            )
-
-            # STEP 4: Credit account via Account Service
+            # STEP 3: Credit account via Account Service
             logger.info(f"💳 Crediting account {account_number}")
             credit_result = await self.account_client.credit_account(
                 account_number=account_number,
@@ -104,27 +91,30 @@ class DepositService:
 
             new_balance = credit_result.get("new_balance", 0)
 
-            # STEP 5: Update transaction status to SUCCESS
-            await self.transaction_repo.update_transaction_status(
-                transaction_id, TransactionStatus.SUCCESS
+            # STEP 4: Create fund_transfers record
+            # For deposits: from_account=0 (system account), to_account=depositing account
+            transaction_id = await self.transaction_repo.create_transaction(
+                from_account=0,
+                to_account=account_number,
+                amount=amount,
+                transaction_type=TransactionType.DEPOSIT,
+                description=description,
             )
 
-            # STEP 6: Log to database
+            # STEP 5: Log transaction to database
             await self.log_repo.log_to_database(
                 account_number=account_number,
                 amount=amount,
                 transaction_type=TransactionType.DEPOSIT,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
 
-            # STEP 7: Log to file
+            # STEP 6: Log to file
             self.log_repo.log_to_file(
                 account_number=account_number,
                 amount=amount,
                 transaction_type=TransactionType.DEPOSIT,
-                status=TransactionStatus.SUCCESS,
                 reference_id=transaction_id,
                 description=description,
             )
@@ -147,32 +137,16 @@ class DepositService:
             AccountNotActiveException,
             InvalidAmountException,
         ):
-            # Log failed transaction
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except ServiceUnavailableException:
-            # Account Service is down
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id, TransactionStatus.FAILED
-                )
             raise
 
         except Exception as e:
             # Unexpected error
             logger.error(f"❌ Deposit failed: {str(e)}")
-            if transaction_id:
-                await self.transaction_repo.update_transaction_status(
-                    transaction_id,
-                    TransactionStatus.FAILED,
-                    error_message=str(e),
-                )
-
             raise DepositFailedException(f"Deposit failed: {str(e)}")
+
 
 
 # Singleton instance

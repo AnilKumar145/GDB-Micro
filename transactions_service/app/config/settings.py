@@ -91,11 +91,11 @@ class Settings:
         },
         "GOLD": {
             "daily_limit": 50000.00,
-            "daily_transaction_count": 30,
+            "daily_transaction_count": 25,
         },
         "SILVER": {
             "daily_limit": 25000.00,
-            "daily_transaction_count": 20,
+            "daily_transaction_count": 10,
         },
         "BASIC": {
             "daily_limit": 10000.00,

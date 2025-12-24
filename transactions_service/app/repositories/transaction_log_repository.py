@@ -12,10 +12,11 @@ from datetime import datetime, timedelta
 from decimal import Decimal
 import asyncpg
 from app.database.db import database
-from app.models.enums import TransactionType, TransactionStatus
+from app.models.enums import TransactionType
 from app.config.settings import settings
 
 logger = logging.getLogger(__name__)
+
 
 
 class TransactionLogRepository:
@@ -26,7 +27,6 @@ class TransactionLogRepository:
         account_number: int,
         amount: Decimal,
         transaction_type: TransactionType,
-        status: TransactionStatus,
         reference_id: int,
         description: Optional[str] = None
     ) -> bool:
@@ -39,7 +39,6 @@ class TransactionLogRepository:
             account_number: Account involved
             amount: Transaction amount
             transaction_type: Type of transaction
-            status: Transaction status
             reference_id: Transaction ID reference
             description: Optional description
             
@@ -47,11 +46,11 @@ class TransactionLogRepository:
             True if logged successfully
         """
         query = """
-            INSERT INTO transaction_logs (
+            INSERT INTO transaction_logging (
                 account_number, amount, transaction_type,
-                status, reference_id, description, created_at
+                created_at
             )
-            VALUES ($1, $2, $3, $4, $5, $6, $7)
+            VALUES ($1, $2, $3, $4)
         """
         
         try:
@@ -62,9 +61,6 @@ class TransactionLogRepository:
                     account_number,
                     float(amount),
                     transaction_type.value,
-                    status.value,
-                    reference_id,
-                    description,
                     datetime.utcnow()
                 )
                 logger.info(
@@ -83,7 +79,6 @@ class TransactionLogRepository:
         account_number: int,
         amount: Decimal,
         transaction_type: TransactionType,
-        status: TransactionStatus,
         reference_id: int,
         description: Optional[str] = None
     ) -> bool:
@@ -97,7 +92,6 @@ class TransactionLogRepository:
             account_number: Account involved
             amount: Transaction amount
             transaction_type: Type of transaction
-            status: Transaction status
             reference_id: Transaction ID reference
             description: Optional description
             
@@ -120,7 +114,6 @@ class TransactionLogRepository:
                 f"Account: {account_number} | "
                 f"Type: {transaction_type.value} | "
                 f"Amount: ₹{amount} | "
-                f"Status: {status.value} | "
                 f"RefID: {reference_id} | "
                 f"Description: {description or 'N/A'}\n"
             )
@@ -154,7 +147,7 @@ class TransactionLogRepository:
             Transaction log dict or None
         """
         query = """
-            SELECT * FROM transaction_logs
+            SELECT * FROM transaction_logging
             WHERE reference_id = $1
             ORDER BY created_at DESC
         """
@@ -173,38 +166,65 @@ class TransactionLogRepository:
     async def get_account_logs(
         account_number: int,
         skip: int = 0,
-        limit: int = 10
+        limit: int = 10,
+        start_date: Optional[datetime] = None,
+        end_date: Optional[datetime] = None
     ) -> tuple[List[Dict[str, Any]], int]:
         """
-        Get all logs for an account.
+        Get all logs for an account with optional date range filtering.
         
         Args:
             account_number: Account number
             skip: Records to skip
             limit: Records to return
+            start_date: Filter from date (inclusive)
+            end_date: Filter to date (inclusive)
             
         Returns:
             Tuple of (list of logs, total count)
         """
+        # Build count query with optional date filter
         count_query = """
             SELECT COUNT(*) as count
-            FROM transaction_logs
+            FROM transaction_logging
             WHERE account_number = $1
         """
+        count_params = [account_number]
         
+        # Build data query with optional date filter
         data_query = """
-            SELECT * FROM transaction_logs
+            SELECT * FROM transaction_logging
             WHERE account_number = $1
-            ORDER BY created_at DESC
-            LIMIT $2 OFFSET $3
         """
+        data_params = [account_number]
+        
+        # Add date filters if provided
+        if start_date:
+            count_query += " AND created_at >= $2"
+            data_query += " AND created_at >= $2"
+            count_params.append(start_date)
+            data_params.append(start_date)
+            next_param = 3
+        else:
+            next_param = 2
+        
+        if end_date:
+            count_query += f" AND created_at <= ${next_param}"
+            data_query += f" AND created_at <= ${next_param}"
+            count_params.append(end_date)
+            data_params.append(end_date)
+            next_param += 1
+        
+        # Add pagination
+        data_query += f" ORDER BY created_at DESC LIMIT ${next_param} OFFSET ${next_param + 1}"
+        data_params.extend([limit, skip])
         
         conn = await database.get_connection()
         try:
-            count_row = await conn.fetchrow(count_query, account_number)
+            count_row = await conn.fetchrow(count_query, *count_params)
             total_count = count_row['count'] if count_row else 0
             
-            rows = await conn.fetch(data_query, account_number, limit, skip)
+            rows = await conn.fetch(data_query, *data_params)
             logs = [dict(row) for row in rows]
             
             return logs, total_count
@@ -254,7 +274,7 @@ class TransactionLogRepository:
         cutoff_date = datetime.utcnow() - timedelta(days=days_to_keep)
         
         query = """
-            DELETE FROM transaction_logs
+            DELETE FROM transaction_logging
             WHERE created_at < $1
         """
         
@@ -269,3 +289,106 @@ class TransactionLogRepository:
         except Exception as e:
             logger.error(f"❌ Failed to delete old logs: {str(e)}")
             return False
+
+    @staticmethod
+    async def log_deposit(
+        account_number: int,
+        amount: Decimal,
+        description: Optional[str] = None
+    ) -> int:
+        """
+        Log a deposit transaction.
+        
+        Args:
+            account_number: Account being credited
+            amount: Deposit amount
+            description: Optional description
+            
+        Returns:
+            Transaction ID for this log entry
+        """
+        await TransactionLogRepository.log_to_database(
+            account_number=account_number,
+            amount=amount,
+            transaction_type=TransactionType.DEPOSIT,
+            reference_id=0,  # Placeholder
+            description=description
+        )
+        TransactionLogRepository.log_to_file(
+            account_number=account_number,
+            amount=amount,
+            transaction_type=TransactionType.DEPOSIT,
+            reference_id=0,
+            description=description
+        )
+        return 1  # Simplified ID
+
+    @staticmethod
+    async def log_withdrawal(
+        account_number: int,
+        amount: Decimal,
+        description: Optional[str] = None
+    ) -> int:
+        """
+        Log a withdrawal transaction.
+        
+        Args:
+            account_number: Account being debited
+            amount: Withdrawal amount
+            description: Optional description
+            
+        Returns:
+            Transaction ID for this log entry
+        """
+        await TransactionLogRepository.log_to_database(
+            account_number=account_number,
+            amount=amount,
+            transaction_type=TransactionType.WITHDRAW,
+            reference_id=0,
+            description=description
+        )
+        TransactionLogRepository.log_to_file(
+            account_number=account_number,
+            amount=amount,
+            transaction_type=TransactionType.WITHDRAW,
+            reference_id=0,
+            description=description
+        )
+        return 1  # Simplified ID
+
+    @staticmethod
+    async def log_transfer(
+        from_account: int,
+        to_account: int,
+        amount: Decimal,
+        transfer_mode: str = "NEFT",
+        description: Optional[str] = None
+    ) -> int:
+        """
+        Log a transfer transaction.
+        
+        Args:
+            from_account: Source account
+            to_account: Destination account
+            amount: Transfer amount
+            transfer_mode: Transfer mode (NEFT, RTGS, IMPS, etc.)
+            description: Optional description
+            
+        Returns:
+            Transaction ID for this log entry
+        """
+        await TransactionLogRepository.log_to_database(
+            account_number=from_account,
+            amount=amount,
+            transaction_type=TransactionType.TRANSFER,
+            reference_id=0,
+            description=description
+        )
+        TransactionLogRepository.log_to_file(
+            account_number=from_account,
+            amount=amount,
+            transaction_type=TransactionType.TRANSFER,
+            reference_id=0,
+            description=description
+        )
+        return 1  # Simplified ID
