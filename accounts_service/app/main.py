@@ -14,15 +14,12 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.trustedhost import TrustedHostMiddleware
 
 from app.config.settings import settings
+from app.config.logging import setup_logging
 from app.database.db import initialize_db, close_db
 from app.api import accounts, internal_accounts
 
 # Configure logging
-logging.basicConfig(
-    level=settings.log_level,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging()
 
 
 @asynccontextmanager

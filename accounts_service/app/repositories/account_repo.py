@@ -24,6 +24,7 @@ from app.models.account import (
     CurrentAccountCreate,
     AccountUpdate
 )
+from app.utils.helpers import AccountNumberGenerator
 
 logger = logging.getLogger(__name__)
 
@@ -61,6 +62,10 @@ class AccountRepository:
                 account_number = await conn.fetchval(
                     "SELECT nextval('account_number_seq')"
                 )
+                
+                # Validate account number format
+                if not AccountNumberGenerator.is_valid_account_number(account_number):
+                    raise DatabaseError(f"Invalid account number generated: {account_number}")
                 
                 # Insert into accounts table with explicit account_number
                 await conn.execute("""
@@ -113,6 +118,10 @@ class AccountRepository:
                 account_number = await conn.fetchval(
                     "SELECT nextval('account_number_seq')"
                 )
+                
+                # Validate account number format
+                if not AccountNumberGenerator.is_valid_account_number(account_number):
+                    raise DatabaseError(f"Invalid account number generated: {account_number}")
                 
                 # Insert into accounts table with explicit account_number
                 await conn.execute("""

@@ -27,7 +27,7 @@ class SavingsAccountCreate(AccountBase):
     account_type: Literal["SAVINGS"] = "SAVINGS"
     pin: str = Field(..., min_length=4, max_length=6, description="4-6 digit PIN")
     date_of_birth: str = Field(..., description="DOB in YYYY-MM-DD format")
-    gender: Literal["M", "F", "OTHER"] = Field(..., description="Gender")
+    gender: Literal["Male", "Female", "Others"] = Field(..., description="Gender")
     phone_no: str = Field(..., min_length=10, max_length=20, description="Phone number")
     
     @field_validator("date_of_birth")
@@ -86,7 +86,7 @@ class SavingsAccountResponse(AccountResponse):
     """Response model for savings account with details."""
     
     date_of_birth: str
-    gender: Literal["M", "F", "OTHER"]
+    gender: Literal["Male", "Female", "Others"]
     phone_no: str
 
 

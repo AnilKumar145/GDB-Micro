@@ -5,10 +5,16 @@
 -- ================================================================
 
 -- ================================================================
+-- ENUM TYPES
+-- ================================================================
+CREATE TYPE gender_enum AS ENUM ('Male', 'Female', 'Others');
+
+-- ================================================================
 -- MAIN ACCOUNTS TABLE
 -- ================================================================
 CREATE TABLE accounts (
-    account_number BIGSERIAL PRIMARY KEY,
+    id BIGSERIAL PRIMARY KEY,
+    account_number BIGSERIAL UNIQUE NOT NULL,
     account_type VARCHAR(10) NOT NULL CHECK (account_type IN ('SAVINGS', 'CURRENT')),
     name VARCHAR(255) NOT NULL,
     pin_hash VARCHAR(255) NOT NULL,
@@ -25,21 +31,18 @@ CREATE TABLE accounts (
 CREATE INDEX idx_accounts_is_active ON accounts(is_active);
 CREATE INDEX idx_accounts_account_type ON accounts(account_type);
 CREATE INDEX idx_accounts_privilege ON accounts(privilege);
+CREATE INDEX idx_accounts_account_number ON accounts(account_number);
 
 -- ================================================================
 -- SAVINGS ACCOUNT DETAILS TABLE
 -- Specific to SAVINGS accounts
 -- ================================================================
 CREATE TABLE savings_account_details (
-    account_number BIGINT PRIMARY KEY REFERENCES accounts(account_number) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    account_number BIGINT NOT NULL UNIQUE REFERENCES accounts(account_number) ON DELETE CASCADE,
     date_of_birth DATE NOT NULL,
-    gender VARCHAR(10) CHECK (gender IN ('M', 'F', 'OTHER')),
+    gender gender_enum NOT NULL,
     phone_no VARCHAR(20) NOT NULL,
-    -- Unique constraint: name + DOB must be unique for savings accounts
-    CONSTRAINT unique_savings_holder UNIQUE (
-        (SELECT name FROM accounts WHERE account_number = savings_account_details.account_number),
-        date_of_birth
-    ),
     created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
 );
@@ -47,13 +50,16 @@ CREATE TABLE savings_account_details (
 -- Create index for date of birth (age verification queries)
 CREATE INDEX idx_savings_dob ON savings_account_details(date_of_birth);
 CREATE INDEX idx_savings_phone ON savings_account_details(phone_no);
+CREATE INDEX idx_savings_account_number ON savings_account_details(account_number);
+
 
 -- ================================================================
 -- CURRENT ACCOUNT DETAILS TABLE
 -- Specific to CURRENT accounts
 -- ================================================================
 CREATE TABLE current_account_details (
-    account_number BIGINT PRIMARY KEY REFERENCES accounts(account_number) ON DELETE CASCADE,
+    id BIGSERIAL PRIMARY KEY,
+    account_number BIGINT NOT NULL UNIQUE REFERENCES accounts(account_number) ON DELETE CASCADE,
     company_name VARCHAR(255) NOT NULL,
     website VARCHAR(255),
     registration_no VARCHAR(50) NOT NULL UNIQUE,
@@ -63,24 +69,7 @@ CREATE TABLE current_account_details (
 
 -- Create index for registration lookup
 CREATE INDEX idx_current_registration ON current_account_details(registration_no);
-
--- ================================================================
--- AUDIT LOG TABLE
--- Track account lifecycle events
--- ================================================================
-CREATE TABLE account_audit_logs (
-    log_id BIGSERIAL PRIMARY KEY,
-    account_number BIGINT NOT NULL REFERENCES accounts(account_number) ON DELETE CASCADE,
-    action VARCHAR(50) NOT NULL CHECK (action IN ('CREATE', 'ACTIVATE', 'INACTIVATE', 'CLOSE', 'BALANCE_UPDATE', 'PRIVILEGE_UPDATE', 'EDIT')),
-    old_data JSONB,
-    new_data JSONB,
-    performed_by VARCHAR(255),
-    performed_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
-);
-
--- Create index for audit queries
-CREATE INDEX idx_audit_account_number ON account_audit_logs(account_number);
-CREATE INDEX idx_audit_performed_at ON account_audit_logs(performed_at DESC);
+CREATE INDEX idx_current_account_number ON current_account_details(account_number);
 
 -- ================================================================
 -- SEQUENCES FOR ACCOUNT NUMBER GENERATION

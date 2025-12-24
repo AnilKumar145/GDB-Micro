@@ -26,7 +26,14 @@ from app.exceptions.account_exceptions import AccountException
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-account_service = AccountService()
+
+
+def get_account_service() -> AccountService:
+    """
+    Dependency injection function for AccountService.
+    Ensures database is initialized before creating service.
+    """
+    return AccountService()
 
 
 # ========================================
@@ -41,7 +48,10 @@ account_service = AccountService()
     summary="Create Savings Account",
     description="Create a new savings account for individuals (age >= 18)"
 )
-async def create_savings_account(request: SavingsAccountCreate):
+async def create_savings_account(
+    request: SavingsAccountCreate,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Create a new savings account.
     
@@ -89,11 +99,10 @@ async def create_savings_account(request: SavingsAccountCreate):
         logger.error(f"❌ Account creation failed: {e.error_code}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorResponse(
-                error_code=e.error_code,
-                message=e.message,
-                path="/api/v1/accounts/savings"
-            ).model_dump()
+            detail={
+                "error_code": e.error_code,
+                "message": e.message
+            }
         )
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
@@ -111,7 +120,10 @@ async def create_savings_account(request: SavingsAccountCreate):
     summary="Create Current Account",
     description="Create a new current account for businesses/companies"
 )
-async def create_current_account(request: CurrentAccountCreate):
+async def create_current_account(
+    request: CurrentAccountCreate,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Create a new current account.
     
@@ -157,11 +169,10 @@ async def create_current_account(request: CurrentAccountCreate):
         logger.error(f"❌ Account creation failed: {e.error_code}")
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
-            detail=ErrorResponse(
-                error_code=e.error_code,
-                message=e.message,
-                path="/api/v1/accounts/current"
-            ).model_dump()
+            detail={
+                "error_code": e.error_code,
+                "message": e.message
+            }
         )
     except Exception as e:
         logger.error(f"❌ Unexpected error: {e}")
@@ -182,7 +193,10 @@ async def create_current_account(request: CurrentAccountCreate):
     summary="Get Account Details",
     description="Retrieve account details"
 )
-async def get_account(account_number: int):
+async def get_account(
+    account_number: int,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Get account details by account number.
     
@@ -232,7 +246,10 @@ async def get_account(account_number: int):
     summary="Get Account Balance",
     description="Retrieve current account balance"
 )
-async def get_balance(account_number: int):
+async def get_balance(
+    account_number: int,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Get account balance.
     
@@ -284,7 +301,11 @@ async def get_balance(account_number: int):
     summary="Update Account",
     description="Update account details (name, privilege)"
 )
-async def update_account(account_number: int, request: AccountUpdate):
+async def update_account(
+    account_number: int,
+    request: AccountUpdate,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Update account details.
     
@@ -334,7 +355,10 @@ async def update_account(account_number: int, request: AccountUpdate):
     summary="Activate Account",
     description="Activate an inactive account"
 )
-async def activate_account(account_number: int):
+async def activate_account(
+    account_number: int,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Activate an account.
     
@@ -359,8 +383,15 @@ async def activate_account(account_number: int):
         
     except AccountException as e:
         logger.error(f"❌ Activate account failed: {e.error_code}")
+        # Map error codes to appropriate HTTP status codes
+        status_code = status.HTTP_400_BAD_REQUEST
+        if "NOT_FOUND" in e.error_code:
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "ALREADY_ACTIVE" in e.error_code:
+            status_code = status.HTTP_409_CONFLICT
+        
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND if "NOT_FOUND" in e.error_code else status.HTTP_400_BAD_REQUEST,
+            status_code=status_code,
             detail={"error_code": e.error_code, "message": e.message}
         )
     except Exception as e:
@@ -378,7 +409,10 @@ async def activate_account(account_number: int):
     summary="Inactivate Account",
     description="Inactivate an active account"
 )
-async def inactivate_account(account_number: int):
+async def inactivate_account(
+    account_number: int,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Inactivate an account.
     
@@ -403,8 +437,15 @@ async def inactivate_account(account_number: int):
         
     except AccountException as e:
         logger.error(f"❌ Inactivate account failed: {e.error_code}")
+        # Map error codes to appropriate HTTP status codes
+        status_code = status.HTTP_400_BAD_REQUEST
+        if "NOT_FOUND" in e.error_code:
+            status_code = status.HTTP_404_NOT_FOUND
+        elif "ALREADY_INACTIVE" in e.error_code:
+            status_code = status.HTTP_409_CONFLICT
+        
         raise HTTPException(
-            status_code=status.HTTP_404_NOT_FOUND if "NOT_FOUND" in e.error_code else status.HTTP_400_BAD_REQUEST,
+            status_code=status_code,
             detail={"error_code": e.error_code, "message": e.message}
         )
     except Exception as e:
@@ -422,7 +463,10 @@ async def inactivate_account(account_number: int):
     summary="Close Account",
     description="Close (soft delete) an account"
 )
-async def close_account(account_number: int):
+async def close_account(
+    account_number: int,
+    account_service: AccountService = Depends(get_account_service)
+):
     """
     Close an account.
     

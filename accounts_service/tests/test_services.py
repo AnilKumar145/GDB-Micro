@@ -405,6 +405,10 @@ class TestAccountStatus:
     @pytest.mark.asyncio
     async def test_activate_account(self, account_service, mock_repository):
         """POSITIVE: Activate inactive account."""
+        # Mock get_account to return an inactive account
+        mock_account = MagicMock()
+        mock_account.is_active = False
+        mock_repository.get_account = AsyncMock(return_value=mock_account)
         mock_repository.activate_account = AsyncMock(return_value=True)
         
         result = await account_service.activate_account(1000)
@@ -413,6 +417,10 @@ class TestAccountStatus:
     @pytest.mark.asyncio
     async def test_inactivate_account(self, account_service, mock_repository):
         """POSITIVE: Inactivate active account."""
+        # Mock get_account to return an active account
+        mock_account = MagicMock()
+        mock_account.is_active = True
+        mock_repository.get_account = AsyncMock(return_value=mock_account)
         mock_repository.inactivate_account = AsyncMock(return_value=True)
         
         result = await account_service.inactivate_account(1000)

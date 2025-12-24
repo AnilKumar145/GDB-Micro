@@ -53,7 +53,7 @@ def validate_pin(pin: str) -> str:
     Rules:
     - Must be 4-6 digits
     - Cannot be all same digits (1111, 2222, etc.)
-    - Cannot be sequential (1234, 4321, etc.)
+    - Cannot be purely sequential consecutive digits (1234, 4321, 0123, 5432, etc.)
     
     Args:
         pin: PIN string
@@ -76,13 +76,18 @@ def validate_pin(pin: str) -> str:
     if len(set(pin)) == 1:
         raise InvalidPinError("PIN cannot have all identical digits")
     
-    # Check for sequential digits
+    # Check for purely sequential consecutive digits
+    # Only reject if each digit differs by exactly 1 from the next
     digits = [int(d) for d in pin]
-    is_ascending = all(digits[i] < digits[i+1] for i in range(len(digits)-1))
-    is_descending = all(digits[i] > digits[i+1] for i in range(len(digits)-1))
     
-    if is_ascending or is_descending:
-        raise InvalidPinError("PIN cannot be sequential")
+    # Check ascending: 0123, 1234, 2345, etc.
+    is_ascending_sequential = all(digits[i+1] - digits[i] == 1 for i in range(len(digits)-1))
+    
+    # Check descending: 3210, 4321, 5432, etc.
+    is_descending_sequential = all(digits[i] - digits[i+1] == 1 for i in range(len(digits)-1))
+    
+    if is_ascending_sequential or is_descending_sequential:
+        raise InvalidPinError("PIN cannot be purely sequential (like 1234 or 4321)")
     
     return pin
 

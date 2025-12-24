@@ -9,7 +9,7 @@ Author: GDB Architecture Team
 """
 
 import logging
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 
 from app.services.internal_service import InternalAccountService
 from app.exceptions.account_exceptions import AccountException
@@ -17,7 +17,14 @@ from app.exceptions.account_exceptions import AccountException
 logger = logging.getLogger(__name__)
 
 router = APIRouter()
-internal_service = InternalAccountService()
+
+
+def get_internal_service() -> InternalAccountService:
+    """
+    Dependency injection function for InternalAccountService.
+    Ensures database is initialized before creating service.
+    """
+    return InternalAccountService()
 
 
 # ========================================
@@ -30,7 +37,10 @@ internal_service = InternalAccountService()
     summary="Get Account Details (Internal)",
     description="Fetch account details for inter-service use. Internal API only."
 )
-async def get_account_details_internal(account_number: int):
+async def get_account_details_internal(
+    account_number: int,
+    internal_service: InternalAccountService = Depends(get_internal_service)
+):
     """
     Get account details for service-to-service use.
     
@@ -78,7 +88,10 @@ async def get_account_details_internal(account_number: int):
     summary="Get Account Privilege (Internal)",
     description="Get privilege level for transfer limit determination"
 )
-async def get_privilege_internal(account_number: int):
+async def get_privilege_internal(
+    account_number: int,
+    internal_service: InternalAccountService = Depends(get_internal_service)
+):
     """
     Get account privilege level for transfer limit enforcement.
     
@@ -122,7 +135,10 @@ async def get_privilege_internal(account_number: int):
     summary="Check Account Active Status (Internal)",
     description="Check if account is active"
 )
-async def check_account_active_internal(account_number: int):
+async def check_account_active_internal(
+    account_number: int,
+    internal_service: InternalAccountService = Depends(get_internal_service)
+):
     """
     Check if account is active.
     
@@ -174,6 +190,7 @@ async def debit_account_internal(
     account_number: int,
     amount: float,
     idempotency_key: str = None,
+    internal_service: InternalAccountService = Depends(get_internal_service),
     description: str = "Internal Debit"
 ):
     """
@@ -257,7 +274,8 @@ async def credit_account_internal(
     account_number: int,
     amount: float,
     idempotency_key: str = None,
-    description: str = "Internal Credit"
+    description: str = "Internal Credit",
+    internal_service: InternalAccountService = Depends(get_internal_service),
 ):
     """
     Credit amount to account (DEPOSIT, TRANSFER TO).
@@ -339,7 +357,11 @@ async def credit_account_internal(
     summary="Verify Account PIN (Internal)",
     description="Verify PIN for transaction authorization"
 )
-async def verify_pin_internal(account_number: int, pin: str):
+async def verify_pin_internal(
+    account_number: int,
+    pin: str,
+    internal_service: InternalAccountService = Depends(get_internal_service),
+):
     """
     Verify account PIN for transaction authorization.
     

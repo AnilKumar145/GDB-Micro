@@ -25,7 +25,9 @@ from app.exceptions.account_exceptions import (
     AccountInactiveError,
     AccountClosedError,
     InsufficientFundsError,
-    InvalidPinError
+    InvalidPinError,
+    AccountAlreadyActiveError,
+    AccountAlreadyInactiveError
 )
 from app.utils.validators import (
     validate_age,
@@ -37,6 +39,7 @@ from app.utils.validators import (
     validate_privilege
 )
 from app.utils.encryption import EncryptionManager
+from app.utils.helpers import mask_account_number, generate_idempotency_key
 
 logger = logging.getLogger(__name__)
 
@@ -367,11 +370,16 @@ class AccountService:
             
         Raises:
             AccountNotFoundError: If account doesn't exist
+            AccountAlreadyActiveError: If account is already active
         """
         account = await self.repo.get_account(account_number)
         
         if not account:
             raise AccountNotFoundError(account_number)
+        
+        # Check if account is already active
+        if account.is_active:
+            raise AccountAlreadyActiveError(account_number)
         
         success = await self.repo.activate_account(account_number)
         
@@ -393,11 +401,16 @@ class AccountService:
             
         Raises:
             AccountNotFoundError: If account doesn't exist
+            AccountAlreadyInactiveError: If account is already inactive
         """
         account = await self.repo.get_account(account_number)
         
         if not account:
             raise AccountNotFoundError(account_number)
+        
+        # Check if account is already inactive
+        if not account.is_active:
+            raise AccountAlreadyInactiveError(account_number)
         
         success = await self.repo.inactivate_account(account_number)
         

@@ -17,6 +17,7 @@ from app.exceptions.account_exceptions import (
     InsufficientFundsError,
     InvalidPinError
 )
+from app.utils.helpers import mask_account_number
 
 logger = logging.getLogger(__name__)
 

@@ -23,58 +23,7 @@ from app.exceptions.account_exceptions import (
 
 
 @pytest.fixture
-def mock_db():
-    """Mock database connection with proper transaction support."""
-    # Create proper dict response for fetchrow
-    db_row = {
-        'account_number': 1000,
-        'name': 'John Doe',
-        'account_type': 'SAVINGS',
-        'balance': Decimal('50000.00'),
-        'privilege': 'GOLD',
-        'is_active': True,
-        'activated_date': datetime.now(),
-        'closed_date': None
-    }
-    
-    db = AsyncMock()
-    
-    # Create a mock connection that's returned from transaction context
-    mock_conn = AsyncMock()
-    mock_conn.fetchval = AsyncMock(return_value=1000)
-    mock_conn.execute = AsyncMock()
-    mock_conn.fetchrow = AsyncMock(return_value=db_row)
-    
-    # Create proper async context manager for transactions
-    class AsyncTransactionContext:
-        def __init__(self, conn):
-            self.conn = conn
-            
-        async def __aenter__(self):
-            return self.conn
-            
-        async def __aexit__(self, exc_type, exc_val, exc_tb):
-            return False
-    
-    db.transaction = MagicMock(return_value=AsyncTransactionContext(mock_conn))
-    db.fetch = AsyncMock(return_value=[])
-    db.fetch_one = AsyncMock(return_value=db_row)
-    db.fetchrow = AsyncMock(return_value=db_row)
-    db.fetchval = AsyncMock(return_value=1000)
-    db.execute = AsyncMock()
-    
-    return db
-
-
-@pytest.fixture
-def mock_pool():
-    """Mock connection pool."""
-    pool = AsyncMock()
-    return pool
-
-
-@pytest.fixture
-async def repo(mock_db):
+def repo(mock_db):
     """Repository with mocked database."""
     with patch('app.repositories.account_repo.get_db') as mock_get_db:
         mock_get_db.return_value = mock_db
