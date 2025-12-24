@@ -12,7 +12,7 @@ from enum import Enum
 
 class TransactionType(str, Enum):
     """Types of transactions."""
-    WITHDRAW = "WITHDRAW"
+    WITHDRAWAL = "WITHDRAWAL"
     DEPOSIT = "DEPOSIT"
     TRANSFER = "TRANSFER"
 

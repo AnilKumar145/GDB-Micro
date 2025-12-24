@@ -103,8 +103,8 @@ class InternalAccountService:
             return {
                 "success": success,
                 "account_number": account_number,
-                "amount_debited": amount,
-                "new_balance": account.balance,
+                "amount_debited": float(amount),
+                "new_balance": float(account.balance),
                 "status": "SUCCESS"
             }
             
@@ -157,8 +157,8 @@ class InternalAccountService:
             return {
                 "success": success,
                 "account_number": account_number,
-                "amount_credited": amount,
-                "new_balance": account.balance,
+                "amount_credited": float(amount),
+                "new_balance": float(account.balance),
                 "status": "SUCCESS"
             }
             

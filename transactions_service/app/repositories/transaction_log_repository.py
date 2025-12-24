@@ -343,14 +343,14 @@ class TransactionLogRepository:
         await TransactionLogRepository.log_to_database(
             account_number=account_number,
             amount=amount,
-            transaction_type=TransactionType.WITHDRAW,
+            transaction_type=TransactionType.WITHDRAWAL,
             reference_id=0,
             description=description
         )
         TransactionLogRepository.log_to_file(
             account_number=account_number,
             amount=amount,
-            transaction_type=TransactionType.WITHDRAW,
+            transaction_type=TransactionType.WITHDRAWAL,
             reference_id=0,
             description=description
         )

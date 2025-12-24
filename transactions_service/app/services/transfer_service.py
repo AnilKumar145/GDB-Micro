@@ -163,6 +163,17 @@ class TransferService:
 
             from_new_balance = debit_result.get("new_balance", 0)
             to_new_balance = credit_result.get("new_balance", 0)
+            
+            # Ensure balances are numeric (handle string conversion if needed)
+            if isinstance(from_new_balance, str):
+                from_new_balance = float(from_new_balance)
+            else:
+                from_new_balance = float(from_new_balance)
+            
+            if isinstance(to_new_balance, str):
+                to_new_balance = float(to_new_balance)
+            else:
+                to_new_balance = float(to_new_balance)
 
             # STEP 8: Log transaction to database - CREATE fund_transfers record FIRST
             transaction_id = await self.transaction_repo.create_transaction(
@@ -202,8 +213,8 @@ class TransferService:
                 "transfer_mode": transfer_mode.value,
                 "transaction_type": TransactionType.TRANSFER.value,
                 "description": description,
-                "from_account_new_balance": from_new_balance,
-                "to_account_new_balance": to_new_balance,
+                "from_account_new_balance": float(from_new_balance),
+                "to_account_new_balance": float(to_new_balance),
                 "transaction_date": datetime.utcnow().isoformat(),
             }
 

@@ -10,6 +10,7 @@ Author: GDB Architecture Team
 import logging
 from typing import Optional, List
 from datetime import datetime, date
+from decimal import Decimal
 import asyncpg
 
 from app.database.db import get_db
@@ -166,7 +167,7 @@ class AccountRepository:
         try:
             row = await self.db.fetch_one("""
                 SELECT 
-                    account_number, account_type, name, balance, 
+                    account_number, account_type, name, balance::numeric(15,2) as balance, 
                     privilege, is_active, activated_date, closed_date
                 FROM accounts
                 WHERE account_number = $1
@@ -175,11 +176,23 @@ class AccountRepository:
             if not row:
                 return None
             
+            # Explicitly convert balance to float
+            balance_value = row['balance']
+            if balance_value is not None:
+                if isinstance(balance_value, Decimal):
+                    balance_value = float(balance_value)
+                elif isinstance(balance_value, str):
+                    balance_value = float(balance_value)
+                else:
+                    balance_value = float(balance_value)
+            else:
+                balance_value = 0.0
+            
             return AccountDetailsResponse(
                 account_number=row['account_number'],
                 account_type=row['account_type'],
                 name=row['name'],
-                balance=float(row['balance']),
+                balance=balance_value,
                 privilege=row['privilege'],
                 is_active=row['is_active'],
                 activated_date=row['activated_date'],

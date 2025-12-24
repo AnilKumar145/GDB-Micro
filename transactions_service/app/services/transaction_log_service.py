@@ -267,7 +267,7 @@ class TransactionLogService:
 
         by_type = {
             TransactionType.DEPOSIT.value: 0,
-            TransactionType.WITHDRAW.value: 0,
+            TransactionType.WITHDRAWAL.value: 0,
             TransactionType.TRANSFER.value: 0,
         }
 

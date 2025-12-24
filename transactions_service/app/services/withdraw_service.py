@@ -116,7 +116,12 @@ class WithdrawService:
                 description=description or "Withdrawal",
             )
 
+            # Ensure new_balance is numeric (handle string conversion if needed)
             new_balance = debit_result.get("new_balance", 0)
+            if isinstance(new_balance, str):
+                new_balance = float(new_balance)
+            else:
+                new_balance = float(new_balance)
 
             # STEP 7: Log transaction to database - CREATE fund_transfers record FIRST
             # For withdrawals: from_account=withdrawing account, to_account=0 (system)
@@ -124,7 +129,7 @@ class WithdrawService:
                 from_account=account_number,
                 to_account=0,
                 amount=float(amount),
-                transaction_type=TransactionType.WITHDRAW,
+                transaction_type=TransactionType.WITHDRAWAL,
                 description=description or "Withdrawal",
             )
 
@@ -132,7 +137,7 @@ class WithdrawService:
             await self.log_repo.log_to_database(
                 account_number=account_number,
                 amount=float(amount),
-                transaction_type=TransactionType.WITHDRAW,
+                transaction_type=TransactionType.WITHDRAWAL,
                 reference_id=transaction_id,
                 description=description,
             )
@@ -141,7 +146,7 @@ class WithdrawService:
             self.log_repo.log_to_file(
                 account_number=account_number,
                 amount=float(amount),
-                transaction_type=TransactionType.WITHDRAW,
+                transaction_type=TransactionType.WITHDRAWAL,
                 reference_id=transaction_id,
                 description=description,
             )
@@ -153,9 +158,9 @@ class WithdrawService:
                 "transaction_id": transaction_id,
                 "account_number": account_number,
                 "amount": float(amount),
-                "transaction_type": TransactionType.WITHDRAW.value,
+                "transaction_type": TransactionType.WITHDRAWAL.value,
                 "description": description,
-                "new_balance": new_balance,
+                "new_balance": float(new_balance),
                 "transaction_date": datetime.utcnow().isoformat(),
             }
 

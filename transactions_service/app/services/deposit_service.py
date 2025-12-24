@@ -90,6 +90,11 @@ class DepositService:
             )
 
             new_balance = credit_result.get("new_balance", 0)
+            # Ensure new_balance is numeric (handle string conversion if needed)
+            if isinstance(new_balance, str):
+                new_balance = float(new_balance)
+            else:
+                new_balance = float(new_balance)
 
             # STEP 4: Create fund_transfers record
             # For deposits: from_account=0 (system account), to_account=depositing account
@@ -128,7 +133,7 @@ class DepositService:
                 "amount": float(amount),
                 "transaction_type": TransactionType.DEPOSIT.value,
                 "description": description,
-                "new_balance": new_balance,
+                "new_balance": float(new_balance),
                 "transaction_date": datetime.utcnow().isoformat(),
             }
 
