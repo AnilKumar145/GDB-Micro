@@ -66,7 +66,6 @@ class TransferService:
         pin: str,
         transfer_mode: TransferMode = TransferMode.NEFT,
         description: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
     ) -> Dict[str, Any]:
         """
         Process fund transfer operation.
@@ -89,7 +88,6 @@ class TransferService:
             pin: Account PIN for authorization
             transfer_mode: NEFT, RTGS, IMPS, etc.
             description: Optional description
-            idempotency_key: For idempotency
 
         Returns:
             Dict with transaction details
@@ -150,7 +148,6 @@ class TransferService:
                 account_number=from_account,
                 amount=float(amount),
                 description=description or f"Transfer to {to_account}",
-                idempotency_key=idempotency_key,
             )
 
             logger.info(f"💳 Crediting destination account {to_account}")
@@ -158,7 +155,6 @@ class TransferService:
                 account_number=to_account,
                 amount=float(amount),
                 description=description or f"Transfer from {from_account}",
-                idempotency_key=idempotency_key,
             )
 
             from_new_balance = debit_result.get("new_balance", 0)

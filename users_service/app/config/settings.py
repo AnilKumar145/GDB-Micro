@@ -59,6 +59,10 @@ class Settings(BaseSettings):
     SECRET_KEY: str = "your-secret-key-change-in-production"
     ALGORITHM: str = "HS256"
     
+    # JWT Settings (for Auth Service token validation)
+    JWT_SECRET_KEY: str = "your-super-secret-jwt-key-change-in-production"
+    JWT_ALGORITHM: str = "HS256"
+    
     # Logging Settings
     LOG_LEVEL: str = "INFO"
     LOG_FILE: Optional[str] = "logs/users_service.log"

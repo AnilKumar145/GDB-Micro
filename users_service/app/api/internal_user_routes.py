@@ -114,11 +114,15 @@ class InternalUserService:
             # Verify password
             is_password_valid = await self._verify_password(password, user.get("password"))
             
+            # Always return actual is_active status from database, regardless of password
+            is_active_value = user.get("is_active", False)
+            self.logger.info(f"DEBUG: User {login_id} is_active from DB: {is_active_value}, type: {type(is_active_value)}")
+            
             return {
                 "is_valid": is_password_valid,
                 "user_id": user.get("user_id") if is_password_valid else None,
                 "role": user.get("role") if is_password_valid else None,
-                "is_active": user.get("is_active", False) if is_password_valid else False
+                "is_active": is_active_value  # Always return actual status, not conditional on password
             }
         
         except Exception as e:
@@ -279,7 +283,11 @@ class InternalUserService:
             True if password matches, False otherwise
         """
         try:
-            return bcrypt.checkpw(plaintext.encode("utf-8"), hashed.encode("utf-8"))
+            # bcrypt.checkpw expects bytes for both arguments
+            # hashed password from DB is typically a string
+            if isinstance(hashed, str):
+                hashed = hashed.encode("utf-8")
+            return bcrypt.checkpw(plaintext.encode("utf-8"), hashed)
         except Exception:
             return False
 

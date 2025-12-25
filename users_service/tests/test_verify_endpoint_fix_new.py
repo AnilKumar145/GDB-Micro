@@ -93,7 +93,7 @@ class TestVerifyEndpointFix:
             assert data["is_valid"] is False, f"Expected is_valid=False for wrong password, got {data['is_valid']}"
             assert data["user_id"] is None, "user_id should be null for invalid password"
             assert data["role"] is None, "role should be null for invalid password"
-            assert data["is_active"] is False, "is_active should be false for invalid password"
+            assert data["is_active"] is True, "is_active should be true (account is still active despite invalid password)"
             
             print("✅ Invalid password response has consistent structure")
             print(f"   Response: {json.dumps(data, indent=2)}")

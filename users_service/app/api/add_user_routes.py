@@ -1,9 +1,12 @@
 """
 Add User Routes for User Management Service.
 Endpoint: POST /api/v1/users
+
+Requires: ADMIN role
 """
 
-from fastapi import APIRouter, HTTPException
+from typing import Dict, Any
+from fastapi import APIRouter, HTTPException, Depends
 from ..models.request_models import AddUserRequest
 from ..models.response_models import AddUserResponse, ErrorResponse
 from ..services.add_user_service import AddUserService
@@ -14,8 +17,24 @@ from ..exceptions.user_management_exception import (
 )
 from ..repositories.user_repository import UserRepository
 import logging
+import sys
+from pathlib import Path
 
 logger = logging.getLogger(__name__)
+
+# Import authorization dependencies from Auth Service
+auth_service_path = str(Path(__file__).parent.parent.parent.parent / "auth_service" / "app")
+if auth_service_path not in sys.path:
+    sys.path.insert(0, auth_service_path)
+
+try:
+    from security.auth_dependencies import require_admin
+except ImportError:
+    # Fallback path
+    auth_service_parent = str(Path(__file__).parent.parent.parent.parent / "auth_service")
+    if auth_service_parent not in sys.path:
+        sys.path.insert(0, auth_service_parent)
+    from app.security.auth_dependencies import require_admin
 
 router = APIRouter(prefix="/api/v1", tags=["User Management"])
 
@@ -25,14 +44,21 @@ router = APIRouter(prefix="/api/v1", tags=["User Management"])
     response_model=AddUserResponse,
     status_code=201,
     responses={
+        401: {"model": ErrorResponse, "description": "Unauthorized"},
+        403: {"model": ErrorResponse, "description": "Forbidden - ADMIN role required"},
         409: {"model": ErrorResponse, "description": "User already exists"},
         400: {"model": ErrorResponse, "description": "Invalid input"},
         500: {"model": ErrorResponse, "description": "Server error"},
     },
 )
-async def add_user(request: AddUserRequest) -> AddUserResponse:
+async def add_user(
+    request: AddUserRequest,
+    claims: Dict[str, Any] = Depends(require_admin()),
+) -> AddUserResponse:
     """
     Add a new user to the system.
+
+    **Authorization:** ADMIN role required
 
     **Endpoint:** POST /api/v1/users
 
@@ -40,14 +66,18 @@ async def add_user(request: AddUserRequest) -> AddUserResponse:
     - login_id must be unique
     - Password will be hashed before storage
     - User is active by default
+    - Only ADMIN can create users
 
     **Request Body:**
     - username: User name (1-255 characters)
     - login_id: Unique login identifier (3-50 characters, alphanumeric + . - _)
     - password: Password (min 8 chars, uppercase, digit)
+    - role: User role (ADMIN, TELLER, CUSTOMER)
 
     **Success Response:** 201 Created
     **Error Responses:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN required)
     - 409: User already exists
     - 400: Invalid input
     """
@@ -59,6 +89,7 @@ async def add_user(request: AddUserRequest) -> AddUserResponse:
         # Call service to add user
         result = await service.add_user(request)
 
+        logger.info(f"User created by {claims.get('login_id')}: {request.login_id}")
         return result
 
     except UserAlreadyExistsException as e:

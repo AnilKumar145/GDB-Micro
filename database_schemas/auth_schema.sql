@@ -1,228 +1,131 @@
 -- ================================================================
 -- AUTH SERVICE DATABASE SCHEMA
 -- Database: gdb_auth_db
--- Purpose: Manage authentication, JWT tokens, and sessions
+-- Purpose: JWT token management and authentication audit logging
 -- ================================================================
+
+-- ================================================================
+-- ENUMS
+-- ================================================================
+
+CREATE TYPE auth_action_enum AS ENUM (
+    'LOGIN_SUCCESS',
+    'LOGIN_FAILURE',
+    'TOKEN_REVOKED'
+);
+
 
 -- ================================================================
 -- AUTH TOKENS TABLE
--- Stores issued JWT tokens for session management
+-- Stores JWT token metadata for revocation and tracking
 -- ================================================================
 CREATE TABLE auth_tokens (
-    token_id BIGSERIAL PRIMARY KEY,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     user_id BIGINT NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    token_type VARCHAR(20) NOT NULL DEFAULT 'Bearer' CHECK (token_type IN ('Bearer', 'Basic')),
-    is_valid BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    revoked_at TIMESTAMP,
-    revocation_reason TEXT
+    login_id VARCHAR(255) NOT NULL,
+    token_jti VARCHAR(255) NOT NULL UNIQUE,
+    issued_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    expires_at TIMESTAMP WITH TIME ZONE NOT NULL,
+    is_revoked BOOLEAN DEFAULT FALSE,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP,
+    
+    CONSTRAINT valid_expiry CHECK (expires_at > issued_at)
 );
 
--- Create indexes for common queries
-CREATE INDEX idx_tokens_user_id ON auth_tokens(user_id);
-CREATE INDEX idx_tokens_token ON auth_tokens(token);
-CREATE INDEX idx_tokens_is_valid ON auth_tokens(is_valid);
-CREATE INDEX idx_tokens_expires_at ON auth_tokens(expires_at);
-CREATE INDEX idx_tokens_created_at ON auth_tokens(created_at DESC);
+CREATE INDEX idx_auth_tokens_user_id ON auth_tokens(user_id);
+CREATE INDEX idx_auth_tokens_token_jti ON auth_tokens(token_jti);
+CREATE INDEX idx_auth_tokens_expires_at ON auth_tokens(expires_at);
+CREATE INDEX idx_auth_tokens_is_revoked ON auth_tokens(is_revoked);
+
 
 -- ================================================================
--- REFRESH TOKENS TABLE
--- Stores refresh tokens for obtaining new access tokens
+-- AUTH AUDIT LOGS TABLE
+-- Complete audit trail of all authentication attempts
 -- ================================================================
-CREATE TABLE refresh_tokens (
-    refresh_token_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    token TEXT NOT NULL UNIQUE,
-    is_valid BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    used_at TIMESTAMP,
-    revoked_at TIMESTAMP
-);
-
--- Create indexes for refresh token queries
-CREATE INDEX idx_refresh_user_id ON refresh_tokens(user_id);
-CREATE INDEX idx_refresh_token ON refresh_tokens(token);
-CREATE INDEX idx_refresh_is_valid ON refresh_tokens(is_valid);
-CREATE INDEX idx_refresh_expires_at ON refresh_tokens(expires_at);
-
--- ================================================================
--- LOGIN ATTEMPTS TABLE
--- Track login attempts for security and audit purposes
--- ================================================================
-CREATE TABLE login_attempts (
-    attempt_id BIGSERIAL PRIMARY KEY,
+CREATE TABLE auth_audit_logs (
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    login_id VARCHAR(255) NOT NULL,
     user_id BIGINT,
-    username VARCHAR(255),
-    login_id VARCHAR(255),
-    is_successful BOOLEAN NOT NULL DEFAULT FALSE,
-    ip_address VARCHAR(45),
-    user_agent TEXT,
-    failure_reason VARCHAR(100),
-    attempted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
+    action auth_action_enum NOT NULL,
+    reason VARCHAR(500),
+    ip_address INET,
+    user_agent VARCHAR(1000),
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT CURRENT_TIMESTAMP
 );
 
--- Create indexes for login audit
-CREATE INDEX idx_login_attempts_user_id ON login_attempts(user_id);
-CREATE INDEX idx_login_attempts_login_id ON login_attempts(login_id);
-CREATE INDEX idx_login_attempts_attempted_at ON login_attempts(attempted_at DESC);
-CREATE INDEX idx_login_attempts_ip ON login_attempts(ip_address);
+CREATE INDEX idx_auth_audit_logs_user_id ON auth_audit_logs(user_id);
+CREATE INDEX idx_auth_audit_logs_login_id ON auth_audit_logs(login_id);
+CREATE INDEX idx_auth_audit_logs_action ON auth_audit_logs(action);
+CREATE INDEX idx_auth_audit_logs_created_at ON auth_audit_logs(created_at);
+
 
 -- ================================================================
--- AUTHENTICATION SESSIONS TABLE
--- Stores active session information
+-- VIEWS
 -- ================================================================
-CREATE TABLE auth_sessions (
-    session_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    access_token_id BIGINT REFERENCES auth_tokens(token_id) ON DELETE CASCADE,
-    refresh_token_id BIGINT REFERENCES refresh_tokens(refresh_token_id) ON DELETE CASCADE,
-    device_info VARCHAR(500),
-    ip_address VARCHAR(45),
-    is_active BOOLEAN NOT NULL DEFAULT TRUE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    last_activity_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL
-);
 
--- Create indexes for session queries
-CREATE INDEX idx_sessions_user_id ON auth_sessions(user_id);
-CREATE INDEX idx_sessions_is_active ON auth_sessions(is_active);
-CREATE INDEX idx_sessions_expires_at ON auth_sessions(expires_at);
-CREATE INDEX idx_sessions_last_activity ON auth_sessions(last_activity_at DESC);
-
--- ================================================================
--- TOKEN BLACKLIST TABLE
--- Stores revoked tokens to prevent reuse
--- ================================================================
-CREATE TABLE token_blacklist (
-    blacklist_id BIGSERIAL PRIMARY KEY,
-    token TEXT NOT NULL UNIQUE,
-    token_type VARCHAR(20) NOT NULL CHECK (token_type IN ('ACCESS', 'REFRESH')),
-    user_id BIGINT,
-    blacklisted_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    reason VARCHAR(255)
-);
-
--- Create index for blacklist lookup
-CREATE INDEX idx_blacklist_token ON token_blacklist(token);
-CREATE INDEX idx_blacklist_expires_at ON token_blacklist(expires_at);
-
--- ================================================================
--- PASSWORD RESET TABLE
--- Manages password reset tokens and requests
--- ================================================================
-CREATE TABLE password_resets (
-    reset_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    reset_token TEXT NOT NULL UNIQUE,
-    is_used BOOLEAN NOT NULL DEFAULT FALSE,
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    expires_at TIMESTAMP NOT NULL,
-    used_at TIMESTAMP,
-    ip_address VARCHAR(45)
-);
-
--- Create index for reset token lookup
-CREATE INDEX idx_password_reset_user_id ON password_resets(user_id);
-CREATE INDEX idx_password_reset_token ON password_resets(reset_token);
-CREATE INDEX idx_password_reset_is_used ON password_resets(is_used);
-
--- ================================================================
--- OAUTH TOKENS TABLE (Optional - for future OAuth2 integration)
--- ================================================================
-CREATE TABLE oauth_tokens (
-    oauth_token_id BIGSERIAL PRIMARY KEY,
-    user_id BIGINT NOT NULL,
-    provider VARCHAR(50) NOT NULL CHECK (provider IN ('GOOGLE', 'GITHUB', 'MICROSOFT', 'FACEBOOK')),
-    access_token TEXT NOT NULL,
-    refresh_token TEXT,
-    token_type VARCHAR(20) DEFAULT 'Bearer',
-    expires_at TIMESTAMP,
-    provider_user_id VARCHAR(255),
-    created_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
-    UNIQUE(user_id, provider)
-);
-
--- Create index for OAuth token lookup
-CREATE INDEX idx_oauth_user_id ON oauth_tokens(user_id);
-CREATE INDEX idx_oauth_provider ON oauth_tokens(provider);
-
--- ================================================================
--- FUNCTION TO UPDATE updated_at TIMESTAMP
--- ================================================================
-CREATE OR REPLACE FUNCTION update_updated_at_column()
-RETURNS TRIGGER AS $$
-BEGIN
-    NEW.updated_at = CURRENT_TIMESTAMP;
-    RETURN NEW;
-END;
-$$ LANGUAGE plpgsql;
-
--- Create trigger for updated_at
-CREATE TRIGGER oauth_update_timestamp BEFORE UPDATE ON oauth_tokens
-    FOR EACH ROW EXECUTE FUNCTION update_updated_at_column();
-
--- ================================================================
--- FUNCTION TO CLEANUP EXPIRED TOKENS (SCHEDULED)
--- ================================================================
-CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
-RETURNS void AS $$
-BEGIN
-    -- Delete expired auth tokens
-    DELETE FROM auth_tokens WHERE expires_at < CURRENT_TIMESTAMP AND is_valid = TRUE;
-    
-    -- Delete expired refresh tokens
-    DELETE FROM refresh_tokens WHERE expires_at < CURRENT_TIMESTAMP AND is_valid = TRUE;
-    
-    -- Delete expired blacklisted tokens
-    DELETE FROM token_blacklist WHERE expires_at < CURRENT_TIMESTAMP;
-    
-    -- Delete expired password reset tokens
-    DELETE FROM password_resets WHERE expires_at < CURRENT_TIMESTAMP AND is_used = FALSE;
-    
-    -- Deactivate expired sessions
-    UPDATE auth_sessions SET is_active = FALSE WHERE expires_at < CURRENT_TIMESTAMP AND is_active = TRUE;
-END;
-$$ LANGUAGE plpgsql;
-
--- ================================================================
--- VIEW FOR ACTIVE SESSIONS
--- Shows currently active user sessions
--- ================================================================
-CREATE VIEW active_sessions_view AS
-SELECT 
-    s.session_id,
-    s.user_id,
-    s.device_info,
-    s.ip_address,
-    s.created_at,
-    s.last_activity_at,
-    s.expires_at,
-    CASE 
-        WHEN s.expires_at > CURRENT_TIMESTAMP THEN 'ACTIVE'
-        ELSE 'EXPIRED'
-    END AS session_status,
-    (s.expires_at - CURRENT_TIMESTAMP) AS time_remaining
-FROM auth_sessions s
-WHERE s.is_active = TRUE;
-
--- ================================================================
--- VIEW FOR TOKEN STATISTICS
--- Shows token issuance statistics
--- ================================================================
-CREATE VIEW token_statistics_view AS
-SELECT 
-    DATE(created_at) AS issue_date,
-    COUNT(*) AS total_tokens_issued,
-    SUM(CASE WHEN is_valid = TRUE THEN 1 ELSE 0 END) AS valid_tokens,
-    SUM(CASE WHEN is_valid = FALSE THEN 1 ELSE 0 END) AS revoked_tokens
+-- Active Tokens View (not revoked and not expired)
+CREATE VIEW active_auth_tokens AS
+SELECT
+    id,
+    user_id,
+    login_id,
+    token_jti,
+    issued_at,
+    expires_at
 FROM auth_tokens
-GROUP BY DATE(created_at);
+WHERE is_revoked = FALSE
+    AND expires_at > CURRENT_TIMESTAMP;
+
+
+-- Recent Logins View (last 30 days)
+CREATE VIEW recent_auth_logins AS
+SELECT
+    id,
+    login_id,
+    user_id,
+    action,
+    reason,
+    ip_address,
+    created_at
+FROM auth_audit_logs
+WHERE created_at >= CURRENT_TIMESTAMP - INTERVAL '30 days'
+ORDER BY created_at DESC;
+
+
+-- Failed Logins View (for security monitoring)
+CREATE VIEW failed_auth_logins AS
+SELECT
+    id,
+    login_id,
+    user_id,
+    reason,
+    ip_address,
+    created_at
+FROM auth_audit_logs
+WHERE action = 'LOGIN_FAILURE'
+ORDER BY created_at DESC;
+
+
+-- ================================================================
+-- CLEANUP PROCEDURE
+-- ================================================================
+
+-- Function to revoke expired tokens
+CREATE OR REPLACE FUNCTION cleanup_expired_tokens()
+RETURNS TABLE(revoked_count INTEGER) AS $$
+DECLARE
+    revoked_count INTEGER;
+BEGIN
+    UPDATE auth_tokens
+    SET is_revoked = TRUE
+    WHERE expires_at <= CURRENT_TIMESTAMP
+        AND is_revoked = FALSE;
+    
+    GET DIAGNOSTICS revoked_count = ROW_COUNT;
+    RETURN QUERY SELECT revoked_count;
+END;
+$$ LANGUAGE plpgsql;
+
 
 -- ================================================================
 -- END OF AUTH SCHEMA

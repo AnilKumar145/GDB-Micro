@@ -66,19 +66,16 @@ class InternalAccountService:
     async def debit_for_transfer(
         self,
         account_number: int,
-        amount: float,
-        idempotency_key: Optional[str] = None
+        amount: float
     ) -> dict:
         """
         Debit account for transfer operation.
         
         Called by: Transactions Service (TRANSFER, WITHDRAW)
-        Idempotency key ensures at-most-once semantics.
         
         Args:
             account_number: Account to debit
             amount: Amount to debit
-            idempotency_key: Idempotency key for retry safety
             
         Returns:
             dict with result and new balance
@@ -93,8 +90,7 @@ class InternalAccountService:
             success = await self.account_service.debit_account(
                 account_number,
                 amount,
-                description="Fund Transfer Debit",
-                idempotency_key=idempotency_key
+                description="Fund Transfer Debit"
             )
             
             # Fetch updated balance
@@ -121,19 +117,16 @@ class InternalAccountService:
     async def credit_for_transfer(
         self,
         account_number: int,
-        amount: float,
-        idempotency_key: Optional[str] = None
+        amount: float
     ) -> dict:
         """
         Credit account for transfer operation.
         
         Called by: Transactions Service (TRANSFER, DEPOSIT)
-        Idempotency key ensures at-most-once semantics.
         
         Args:
             account_number: Account to credit
             amount: Amount to credit
-            idempotency_key: Idempotency key for retry safety
             
         Returns:
             dict with result and new balance
@@ -147,8 +140,7 @@ class InternalAccountService:
             success = await self.account_service.credit_account(
                 account_number,
                 amount,
-                description="Fund Transfer Credit",
-                idempotency_key=idempotency_key
+                description="Fund Transfer Credit"
             )
             
             # Fetch updated balance

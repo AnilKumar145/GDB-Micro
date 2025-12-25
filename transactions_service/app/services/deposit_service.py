@@ -83,12 +83,21 @@ class DepositService:
 
             # STEP 3: Credit account via Account Service
             logger.info(f"💳 Crediting account {account_number}")
+            print(f"DEBUG: About to call credit_account with account_number={account_number}, amount={float(amount)}")
             credit_result = await self.account_client.credit_account(
                 account_number=account_number,
                 amount=float(amount),
                 description=description or "Deposit",
             )
+            print(f"DEBUG: credit_result received: type={type(credit_result)}, value={credit_result}")
 
+            logger.info(f"DEBUG: credit_result type = {type(credit_result)}, value = {credit_result}")
+            
+            # Verify credit_result is a dict before calling .get()
+            if not isinstance(credit_result, dict):
+                logger.error(f"❌ ERROR: credit_result is not a dict! Type: {type(credit_result)}, Value: {credit_result}")
+                raise TypeError(f"Expected dict from credit_account, got {type(credit_result)}")
+            
             new_balance = credit_result.get("new_balance", 0)
             # Ensure new_balance is numeric (handle string conversion if needed)
             if isinstance(new_balance, str):
@@ -149,7 +158,9 @@ class DepositService:
 
         except Exception as e:
             # Unexpected error
-            logger.error(f"❌ Deposit failed: {str(e)}")
+            logger.error(f"❌ Deposit failed: {str(e)}", exc_info=True)
+            import traceback
+            logger.error(f"Full traceback: {traceback.format_exc()}")
             raise DepositFailedException(f"Deposit failed: {str(e)}")
 
 

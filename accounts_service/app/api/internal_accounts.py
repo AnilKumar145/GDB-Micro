@@ -189,9 +189,8 @@ async def check_account_active_internal(
 async def debit_account_internal(
     account_number: int,
     amount: float,
-    idempotency_key: str = None,
+    description: str = "Internal Debit",
     internal_service: InternalAccountService = Depends(get_internal_service),
-    description: str = "Internal Debit"
 ):
     """
     Debit amount from account (WITHDRAW, TRANSFER FROM).
@@ -246,18 +245,22 @@ async def debit_account_internal(
     - At-most-once semantics with idempotency key
     """
     try:
+        logger.info(f"💸 Debit endpoint called: account={account_number}, amount={amount}, description={description}")
+        logger.debug(f"internal_service type: {type(internal_service)}, value: {internal_service}")
+        
         result = await internal_service.debit_for_transfer(
             account_number,
-            amount,
-            idempotency_key
+            amount
         )
+        
+        logger.info(f"✅ Debit result: {result}")
         
         # Return appropriate status code based on result
         status_code = status.HTTP_200_OK if result["status"] == "SUCCESS" else status.HTTP_400_BAD_REQUEST
         return result
         
     except Exception as e:
-        logger.error(f"❌ Debit failed: {e}")
+        logger.error(f"❌ Debit failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error_code": "INTERNAL_ERROR", "message": str(e)}
@@ -273,7 +276,6 @@ async def debit_account_internal(
 async def credit_account_internal(
     account_number: int,
     amount: float,
-    idempotency_key: str = None,
     description: str = "Internal Credit",
     internal_service: InternalAccountService = Depends(get_internal_service),
 ):
@@ -329,18 +331,22 @@ async def credit_account_internal(
     - At-most-once semantics with idempotency key
     """
     try:
+        logger.info(f"💳 Credit endpoint called: account={account_number}, amount={amount}, description={description}")
+        logger.debug(f"internal_service type: {type(internal_service)}, value: {internal_service}")
+        
         result = await internal_service.credit_for_transfer(
             account_number,
-            amount,
-            idempotency_key
+            amount
         )
+        
+        logger.info(f"✅ Credit result: {result}")
         
         # Return appropriate status code based on result
         status_code = status.HTTP_200_OK if result["status"] == "SUCCESS" else status.HTTP_400_BAD_REQUEST
         return result
         
     except Exception as e:
-        logger.error(f"❌ Credit failed: {e}")
+        logger.error(f"❌ Credit failed: {e}", exc_info=True)
         raise HTTPException(
             status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail={"error_code": "INTERNAL_ERROR", "message": str(e)}
@@ -404,8 +410,22 @@ async def verify_pin_internal(
     """
     try:
         result = await internal_service.verify_account_pin(account_number, pin)
+        
+        # If PIN is invalid, return 400 Bad Request
+        if not result.get("pin_valid", False):
+            logger.warning(f"❌ PIN verification failed for account {account_number}")
+            raise HTTPException(
+                status_code=status.HTTP_400_BAD_REQUEST,
+                detail={
+                    "error_code": result.get("error_code", "INVALID_PIN"),
+                    "message": "PIN verification failed. Transaction cannot proceed."
+                }
+            )
+        
         return result
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"❌ PIN verification error: {e}")
         raise HTTPException(

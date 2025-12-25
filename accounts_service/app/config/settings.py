@@ -46,6 +46,10 @@ class Settings(BaseSettings):
     pin_encryption_key: str = "your-secret-encryption-key"
     access_token_expire_minutes: int = 30
     
+    # JWT Settings (for Auth Service token validation)
+    jwt_secret_key: str = "your-super-secret-jwt-key-change-in-production"
+    jwt_algorithm: str = "HS256"
+    
     # Logging Settings
     log_level: str = "INFO"
     log_file: Optional[str] = "logs/accounts_service.log"

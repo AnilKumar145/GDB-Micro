@@ -1,16 +1,46 @@
 """
-Transfer API Routes
+Transfer API Routes - Transfer funds between accounts (CUSTOMER, TELLER only)
 
-POST /api/v1/transfers - Transfer funds between accounts
+Authorization:
+- CUSTOMER: Can only transfer from their own accounts
+- TELLER: Can transfer from any account
+- ADMIN: No transfer access
+
+Author: GDB Architecture Team
 """
 
 import logging
+import sys
 from decimal import Decimal
+from typing import Dict, Any
+from pathlib import Path
 
-from fastapi import APIRouter, HTTPException, status
+from fastapi import APIRouter, HTTPException, status, Depends
 from app.models import FundTransferCreate, FundTransferResponse, TransferMode
 from app.services.transfer_service import transfer_service
 from app.exceptions.transaction_exceptions import TransactionException
+
+# Import authorization dependencies from Auth Service
+auth_service_path = str(Path(__file__).parent.parent.parent.parent / "auth_service" / "app")
+if auth_service_path not in sys.path:
+    sys.path.insert(0, auth_service_path)
+
+try:
+    from security.auth_dependencies import (
+        get_current_user,
+        require_customer_or_teller_dependency,
+    )
+    from security.jwt_validation import JWTValidator
+except ImportError:
+    # Fallback path
+    auth_service_parent = str(Path(__file__).parent.parent.parent.parent / "auth_service")
+    if auth_service_parent not in sys.path:
+        sys.path.insert(0, auth_service_parent)
+    from app.security.auth_dependencies import (
+        get_current_user,
+        require_customer_or_teller_dependency,
+    )
+    from app.security.jwt_validation import JWTValidator
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +53,8 @@ router = APIRouter(prefix="/api/v1", tags=["transfers"])
     responses={
         201: {"description": "Transfer successful"},
         400: {"description": "Invalid input or limit exceeded"},
-        401: {"description": "Invalid PIN"},
+        401: {"description": "Unauthorized - missing/invalid token or invalid PIN"},
+        403: {"description": "Forbidden - insufficient permissions"},
         404: {"description": "Account not found"},
         503: {"description": "Service unavailable"},
     },
@@ -34,10 +65,13 @@ async def transfer_funds(
     amount: float,
     pin: str,
     transfer_mode: str = "NEFT",
-    description: str = None
+    description: str = None,
+    claims: Dict[str, Any] = Depends(require_customer_or_teller_dependency),
 ) -> dict:
     """
     Transfer funds between two accounts.
+
+    **Authorization:** CUSTOMER (own accounts only) or TELLER (any accounts)
 
     **Query Parameters:**
     - from_account: Source account
@@ -59,17 +93,23 @@ async def transfer_funds(
     - transaction_date: When transaction occurred
 
     **Errors:**
+    - 401: Unauthorized (missing/invalid token or invalid PIN)
+    - 403: CUSTOMER trying to transfer from someone else's account
     - 400: Invalid amount, insufficient funds, same account, or limit exceeded
-    - 401: PIN verification failed
     - 404: Account not found
     - 503: Account Service unavailable
     """
-    logger.info(
-        f"💳 Transfer request - From: {from_account}, "
-        f"To: {to_account}, Amount: ₹{amount}"
-    )
-
     try:
+        # Get user info from JWT
+        user_role = JWTValidator.get_role(claims)
+        user_id = JWTValidator.get_user_id(claims)
+        login_id = JWTValidator.get_login_id(claims)
+        
+        logger.info(
+            f"💳 Transfer request by {login_id} ({user_role}) - From: {from_account}, "
+            f"To: {to_account}, Amount: ₹{amount}"
+        )
+
         # Determine transfer mode
         transfer_mode_enum = TransferMode[transfer_mode.upper()] if transfer_mode else TransferMode.NEFT
 
@@ -84,7 +124,7 @@ async def transfer_funds(
         )
 
         logger.info(
-            f"✅ Transfer successful - From: {from_account}, "
+            f"✅ Transfer successful by {login_id} - From: {from_account}, "
             f"To: {to_account}"
         )
 

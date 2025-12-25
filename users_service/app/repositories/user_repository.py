@@ -45,7 +45,11 @@ class UserRepository:
                 WHERE login_id = $1
             """
             user = await self.db.fetchrow(query, login_id)
-            return dict(user) if user else None
+            if user:
+                user_dict = dict(user)
+                logger.info(f"DEBUG: User {login_id} data from DB: {user_dict}, is_active type: {type(user_dict.get('is_active'))}")
+                return user_dict
+            return None
         except Exception as e:
             logger.error(f"❌ Error fetching user: {str(e)}")
             raise

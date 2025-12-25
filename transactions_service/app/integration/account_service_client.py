@@ -143,8 +143,7 @@ class AccountServiceClient:
         self,
         account_number: int,
         amount: float,
-        description: str = "Transaction",
-        idempotency_key: Optional[str] = None
+        description: str = "Transaction"
     ) -> Dict[str, Any]:
         """
         Debit amount from account (for withdrawal/transfer) using INTERNAL API.
@@ -153,7 +152,6 @@ class AccountServiceClient:
             account_number: Account to debit
             amount: Amount to debit
             description: Transaction description
-            idempotency_key: For retry safety
             
         Returns:
             Account data after debit with key 'new_balance'
@@ -170,19 +168,23 @@ class AccountServiceClient:
                     "amount": amount,
                     "description": description
                 }
-                if idempotency_key:
-                    params["idempotency_key"] = idempotency_key
                 
                 response = await client.post(
                     endpoint,
                     params=params
                 )
                 
+                logger.debug(f"Account Service debit response status: {response.status_code}, content: {response.text}")
+                
                 if response.status_code == 200:
-                    return response.json()
+                    result = response.json()
+                    logger.debug(f"Parsed debit JSON result type: {type(result)}, value: {result}")
+                    return result
                 
                 if response.status_code == 400:
-                    raise AccountServiceException(response.json().get("error"))
+                    error_data = response.json()
+                    logger.error(f"Debit failed with 400: {error_data}")
+                    raise AccountServiceException(error_data.get("error"))
                 
                 raise ServiceUnavailableException(
                     "Debit operation failed"
@@ -197,8 +199,7 @@ class AccountServiceClient:
         self,
         account_number: int,
         amount: float,
-        description: str = "Transaction",
-        idempotency_key: Optional[str] = None
+        description: str = "Transaction"
     ) -> Dict[str, Any]:
         """
         Credit amount to account (for deposit/transfer) using INTERNAL API.
@@ -207,7 +208,6 @@ class AccountServiceClient:
             account_number: Account to credit
             amount: Amount to credit
             description: Transaction description
-            idempotency_key: For retry safety
             
         Returns:
             Account data after credit with key 'new_balance'
@@ -223,8 +223,6 @@ class AccountServiceClient:
                     "amount": amount,
                     "description": description
                 }
-                if idempotency_key:
-                    params["idempotency_key"] = idempotency_key
                 
                 response = await client.post(
                     endpoint,
@@ -232,8 +230,11 @@ class AccountServiceClient:
                 )
                 
                 if response.status_code == 200:
-                    return response.json()
+                    json_data = response.json()
+                    print(f"DEBUG credit_account: json_data type={type(json_data)}, value={json_data}")
+                    return json_data
                 
+                logger.error(f"Credit operation failed with status {response.status_code}: {response.text}")
                 raise ServiceUnavailableException(
                     "Credit operation failed"
                 )

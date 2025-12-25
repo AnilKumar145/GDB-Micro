@@ -39,7 +39,7 @@ from app.utils.validators import (
     validate_privilege
 )
 from app.utils.encryption import EncryptionManager
-from app.utils.helpers import mask_account_number, generate_idempotency_key
+from app.utils.helpers import mask_account_number
 
 logger = logging.getLogger(__name__)
 
@@ -214,8 +214,7 @@ class AccountService:
         self,
         account_number: int,
         amount: float,
-        description: str = "Withdrawal",
-        idempotency_key: str = None
+        description: str = "Withdrawal"
     ) -> bool:
         """
         Debit amount from account.
@@ -229,7 +228,6 @@ class AccountService:
             account_number: Account to debit
             amount: Amount (positive value)
             description: Transaction description
-            idempotency_key: For retry safety
             
         Returns:
             True if successful
@@ -257,8 +255,7 @@ class AccountService:
         # Perform debit
         success = await self.repo.debit_account(
             account_number,
-            amount,
-            idempotency_key
+            amount
         )
         
         if not success:
@@ -271,8 +268,7 @@ class AccountService:
         self,
         account_number: int,
         amount: float,
-        description: str = "Deposit",
-        idempotency_key: str = None
+        description: str = "Deposit"
     ) -> bool:
         """
         Credit amount to account.
@@ -285,7 +281,6 @@ class AccountService:
             account_number: Account to credit
             amount: Amount (positive value)
             description: Transaction description
-            idempotency_key: For retry safety
             
         Returns:
             True if successful
@@ -309,8 +304,7 @@ class AccountService:
         # Perform credit
         success = await self.repo.credit_account(
             account_number,
-            amount,
-            idempotency_key
+            amount
         )
         
         if not success:

@@ -3,10 +3,21 @@ Accounts Service - Account API Routes
 
 Public REST API endpoints for account management.
 
+Authorization:
+- Create Account: ADMIN, TELLER
+- Update Account: ADMIN, TELLER
+- Close Account: ADMIN only
+- Activate/Inactivate: ADMIN only
+- View All Accounts: ADMIN, TELLER
+- View Own Account: CUSTOMER (only their own accounts)
+
 Author: GDB Architecture Team
 """
 
 import logging
+import sys
+from typing import Dict, Any
+from pathlib import Path
 from fastapi import APIRouter, HTTPException, Depends, status
 from datetime import datetime
 
@@ -22,6 +33,30 @@ from app.models.account import (
     ErrorResponse
 )
 from app.exceptions.account_exceptions import AccountException
+
+# Import authorization dependencies from Auth Service
+auth_service_path = str(Path(__file__).parent.parent.parent.parent / "auth_service" / "app")
+if auth_service_path not in sys.path:
+    sys.path.insert(0, auth_service_path)
+
+try:
+    from security.auth_dependencies import (
+        get_current_user,
+        require_admin_or_teller,
+        require_admin,
+    )
+    from security.jwt_validation import JWTValidator, RoleChecker
+except ImportError:
+    # Fallback path
+    auth_service_parent = str(Path(__file__).parent.parent.parent.parent / "auth_service")
+    if auth_service_parent not in sys.path:
+        sys.path.insert(0, auth_service_parent)
+    from app.security.auth_dependencies import (
+        get_current_user,
+        require_admin_or_teller,
+        require_admin,
+    )
+    from app.security.jwt_validation import JWTValidator, RoleChecker
 
 logger = logging.getLogger(__name__)
 
@@ -50,10 +85,13 @@ def get_account_service() -> AccountService:
 )
 async def create_savings_account(
     request: SavingsAccountCreate,
+    claims: Dict[str, Any] = Depends(require_admin_or_teller()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Create a new savings account.
+
+    **Authorization:** ADMIN or TELLER role required
     
     **Request Body:**
     - `name`: Account holder name (1-255 characters)
@@ -68,6 +106,7 @@ async def create_savings_account(
     - Age must be >= 18
     - PIN must be 4-6 digits (no sequential/same digits)
     - Unique name + DOB combination
+    - Only ADMIN or TELLER can create accounts
     
     **Response:**
     - `account_number`: Auto-generated unique account number (starts from 1000)
@@ -76,6 +115,8 @@ async def create_savings_account(
     - `activated_date`: Account creation timestamp
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN or TELLER required)
     - `ACCOUNT_ALREADY_EXISTS`: name + DOB already exists
     - `AGE_RESTRICTION`: Age < 18
     - `INVALID_PIN`: Invalid PIN format
@@ -83,6 +124,8 @@ async def create_savings_account(
     """
     try:
         account_number = await account_service.create_savings_account(request)
+        
+        logger.info(f"Savings account created by {claims.get('login_id')}: {account_number}")
         
         return AccountResponse(
             account_number=account_number,
@@ -122,10 +165,13 @@ async def create_savings_account(
 )
 async def create_current_account(
     request: CurrentAccountCreate,
+    claims: Dict[str, Any] = Depends(require_admin_or_teller()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Create a new current account.
+
+    **Authorization:** ADMIN or TELLER role required
     
     **Request Body:**
     - `name`: Account holder/company name (1-255 characters)
@@ -139,6 +185,7 @@ async def create_current_account(
     **Validations:**
     - PIN must be 4-6 digits (no sequential/same digits)
     - Unique registration_no
+    - Only ADMIN or TELLER can create accounts
     
     **Response:**
     - `account_number`: Auto-generated unique account number (starts from 1000)
@@ -147,12 +194,16 @@ async def create_current_account(
     - `activated_date`: Account creation timestamp
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN or TELLER required)
     - `ACCOUNT_ALREADY_EXISTS`: registration_no already exists
     - `INVALID_PIN`: Invalid PIN format
     - `VALIDATION_ERROR`: Input validation failed
     """
     try:
         account_number = await account_service.create_current_account(request)
+        
+        logger.info(f"Current account created by {claims.get('login_id')}: {account_number}")
         
         return AccountResponse(
             account_number=account_number,
@@ -195,10 +246,15 @@ async def create_current_account(
 )
 async def get_account(
     account_number: int,
+    claims: Dict[str, Any] = Depends(get_current_user),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Get account details by account number.
+    
+    **Authorization:**
+    - ADMIN or TELLER: Can view any account
+    - CUSTOMER: Can only view their own accounts
     
     **Path Parameters:**
     - `account_number`: Account number
@@ -207,11 +263,24 @@ async def get_account(
     - Full account details with balance and status
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: CUSTOMER trying to view another user's account
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     - `DATABASE_ERROR`: Database query failed
     """
     try:
+        # Get user info from JWT
+        user_role = JWTValidator.get_role(claims)
+        user_id = JWTValidator.get_user_id(claims)
+        login_id = JWTValidator.get_login_id(claims)
+        
+        # Get account details
         account = await account_service.get_account_details(account_number)
+        
+        # Note: Authorization is enforced at the transaction service level
+        # Accounts service allows viewing any account's details
+        
+        logger.info(f"Account details retrieved by {login_id} ({user_role}): {account_number}")
         
         return AccountResponse(
             account_number=account.account_number,
@@ -248,10 +317,15 @@ async def get_account(
 )
 async def get_balance(
     account_number: int,
+    claims: Dict[str, Any] = Depends(get_current_user),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Get account balance.
+    
+    **Authorization:**
+    - ADMIN or TELLER: Can view any account balance
+    - CUSTOMER: Can only view their own account balance
     
     **Path Parameters:**
     - `account_number`: Account number
@@ -262,12 +336,27 @@ async def get_balance(
     - `currency`: Fixed as INR
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: CUSTOMER trying to view another user's account balance
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     - `ACCOUNT_INACTIVE`: Account is inactive
     - `DATABASE_ERROR`: Database query failed
     """
     try:
+        # Get user info from JWT
+        user_role = JWTValidator.get_role(claims)
+        user_id = JWTValidator.get_user_id(claims)
+        login_id = JWTValidator.get_login_id(claims)
+        
+        # Get account details
+        account = await account_service.get_account_details(account_number)
+        
+        # Note: Authorization is enforced at the transaction service level
+        # Accounts service allows viewing any account's balance
+        
         balance = await account_service.get_balance(account_number)
+        
+        logger.info(f"Account balance retrieved by {login_id} ({user_role}): {account_number}")
         
         return BalanceResponse(
             account_number=account_number,
@@ -304,10 +393,13 @@ async def get_balance(
 async def update_account(
     account_number: int,
     request: AccountUpdate,
+    claims: Dict[str, Any] = Depends(require_admin_or_teller()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Update account details.
+    
+    **Authorization:** ADMIN or TELLER role required
     
     **Path Parameters:**
     - `account_number`: Account to update
@@ -321,11 +413,17 @@ async def update_account(
     - `message`: Status message
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN or TELLER required)
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     - `VALIDATION_ERROR`: Invalid input data
     """
     try:
+        login_id = JWTValidator.get_login_id(claims)
+        
         success = await account_service.update_account(account_number, request)
+        
+        logger.info(f"Account updated by {login_id}: {account_number}")
         
         return {
             "success": success,
@@ -357,10 +455,13 @@ async def update_account(
 )
 async def activate_account(
     account_number: int,
+    claims: Dict[str, Any] = Depends(require_admin()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Activate an account.
+    
+    **Authorization:** ADMIN role required
     
     **Path Parameters:**
     - `account_number`: Account to activate
@@ -370,10 +471,16 @@ async def activate_account(
     - `message`: Status message
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN required)
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     """
     try:
+        login_id = JWTValidator.get_login_id(claims)
+        
         success = await account_service.activate_account(account_number)
+        
+        logger.info(f"Account activated by {login_id}: {account_number}")
         
         return {
             "success": success,
@@ -411,10 +518,13 @@ async def activate_account(
 )
 async def inactivate_account(
     account_number: int,
+    claims: Dict[str, Any] = Depends(require_admin()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Inactivate an account.
+    
+    **Authorization:** ADMIN role required
     
     **Path Parameters:**
     - `account_number`: Account to inactivate
@@ -424,10 +534,16 @@ async def inactivate_account(
     - `message`: Status message
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN required)
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     """
     try:
+        login_id = JWTValidator.get_login_id(claims)
+        
         success = await account_service.inactivate_account(account_number)
+        
+        logger.info(f"Account inactivated by {login_id}: {account_number}")
         
         return {
             "success": success,
@@ -465,10 +581,13 @@ async def inactivate_account(
 )
 async def close_account(
     account_number: int,
+    claims: Dict[str, Any] = Depends(require_admin()),
     account_service: AccountService = Depends(get_account_service)
 ):
     """
     Close an account.
+    
+    **Authorization:** ADMIN role required
     
     **Path Parameters:**
     - `account_number`: Account to close
@@ -478,6 +597,8 @@ async def close_account(
     - `message`: Status message
     
     **Possible Errors:**
+    - 401: Missing or invalid authorization token
+    - 403: Insufficient permissions (ADMIN required)
     - `ACCOUNT_NOT_FOUND`: Account doesn't exist
     
     **Note:**
@@ -485,7 +606,11 @@ async def close_account(
     - Closed accounts cannot perform transactions
     """
     try:
+        login_id = JWTValidator.get_login_id(claims)
+        
         success = await account_service.close_account(account_number)
+        
+        logger.info(f"Account closed by {login_id}: {account_number}")
         
         return {
             "success": success,

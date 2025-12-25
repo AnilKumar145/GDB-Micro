@@ -57,7 +57,7 @@ class TestTransactionTypeEnum:
     def test_transaction_type_values(self):
         """POSITIVE: Verify all transaction type values exist."""
         assert TransactionType.DEPOSIT.value == "DEPOSIT"
-        assert TransactionType.WITHDRAWAL.value == "WITHDRAWAL"
+        assert TransactionType.WITHDRAWAL.value == "WITHDRAW"
         assert TransactionType.TRANSFER.value == "TRANSFER"
     
     def test_transaction_type_count(self):

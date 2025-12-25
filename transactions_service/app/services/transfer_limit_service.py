@@ -163,7 +163,6 @@ class TransferLimitService:
             PrivilegeLevel.PREMIUM,
             PrivilegeLevel.GOLD,
             PrivilegeLevel.SILVER,
-            PrivilegeLevel.BASIC,
         ]:
             rule = await self.limit_repo.get_transfer_rule(privilege.value)
             if rule:

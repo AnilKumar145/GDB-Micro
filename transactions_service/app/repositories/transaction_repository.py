@@ -27,7 +27,6 @@ class TransactionRepository:
         amount: Decimal,
         transaction_type: TransactionType,
         description: Optional[str] = None,
-        idempotency_key: Optional[str] = None,
     ) -> int:
         """
         Create a new transaction record in fund_transfers table.
@@ -38,7 +37,6 @@ class TransactionRepository:
             amount: Transaction amount
             transaction_type: Type of transaction
             description: Transaction description
-            idempotency_key: For idempotency
             
         Returns:
             transaction_id of created record
@@ -71,14 +69,9 @@ class TransactionRepository:
             finally:
                 await database._pool.release(conn)
         except asyncpg.UniqueViolationError:
-            # Idempotency key already exists
-            query = "SELECT transaction_id FROM fund_transfers WHERE idempotency_key = $1"
-            conn = await database.get_connection()
-            try:
-                transaction_id = await conn.fetchval(query, idempotency_key)
-                return transaction_id
-            finally:
-                await database._pool.release(conn)
+            # Handle unique violation error
+            logger.error("Transaction creation failed due to unique constraint violation")
+            raise
 
     @staticmethod
     async def get_transaction(transaction_id: int) -> Optional[Dict[str, Any]]:

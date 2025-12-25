@@ -230,18 +230,14 @@ class AccountRepository:
     async def debit_account(
         self,
         account_number: int,
-        amount: float,
-        idempotency_key: Optional[str] = None
+        amount: float
     ) -> bool:
         """
         Debit amount from account (WITHDRAW/TRANSFER FROM).
         
-        Uses idempotency key for at-most-once semantics.
-        
         Args:
             account_number: Account to debit
             amount: Amount to debit (positive value)
-            idempotency_key: Idempotency key for retry safety
             
         Returns:
             True if successful
@@ -251,17 +247,6 @@ class AccountRepository:
         """
         try:
             async with self.db.transaction() as conn:
-                # Check idempotency
-                if idempotency_key:
-                    existing = await conn.fetchval("""
-                        SELECT 1 FROM transactions 
-                        WHERE idempotency_key = $1 AND status = 'SUCCESS'
-                    """, idempotency_key)
-                    
-                    if existing:
-                        logger.info(f"⚠️ Debit already processed: {idempotency_key}")
-                        return True
-                
                 # Perform debit with check
                 result = await conn.execute("""
                     UPDATE accounts
@@ -286,18 +271,14 @@ class AccountRepository:
     async def credit_account(
         self,
         account_number: int,
-        amount: float,
-        idempotency_key: Optional[str] = None
+        amount: float
     ) -> bool:
         """
         Credit amount to account (DEPOSIT/TRANSFER TO).
         
-        Uses idempotency key for at-most-once semantics.
-        
         Args:
             account_number: Account to credit
             amount: Amount to credit (positive value)
-            idempotency_key: Idempotency key for retry safety
             
         Returns:
             True if successful
@@ -307,17 +288,6 @@ class AccountRepository:
         """
         try:
             async with self.db.transaction() as conn:
-                # Check idempotency
-                if idempotency_key:
-                    existing = await conn.fetchval("""
-                        SELECT 1 FROM transactions 
-                        WHERE idempotency_key = $1 AND status = 'SUCCESS'
-                    """, idempotency_key)
-                    
-                    if existing:
-                        logger.info(f"⚠️ Credit already processed: {idempotency_key}")
-                        return True
-                
                 # Perform credit
                 result = await conn.execute("""
                     UPDATE accounts
