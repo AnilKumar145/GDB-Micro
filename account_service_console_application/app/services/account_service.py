@@ -1,0 +1,454 @@
+"""
+Account Service - Account Business Logic Service
+
+High-level business logic for account management.
+Orchestrates repository and validation layer.
+
+Author: GDB Architecture Team
+"""
+
+import logging
+from typing import Optional, List
+
+from app.repositories.account_repo import AccountRepository
+from app.models.account import (
+    SavingsAccountCreate,
+    CurrentAccountCreate,
+    AccountUpdate,
+    AccountDetailsResponse
+)
+from app.exceptions.account_exceptions import (
+    AccountNotFoundError,
+    AccountInactiveError,
+    AccountClosedError,
+    InsufficientFundsError,
+    InvalidPinError,
+    AccountAlreadyActiveError,
+    AccountAlreadyInactiveError
+)
+from app.utils.validators import (
+    validate_age,
+    validate_pin,
+    validate_phone_number,
+    validate_name,
+    validate_company_name,
+    validate_registration_number,
+    validate_privilege,
+    validate_amount
+)
+from app.utils.encryption import EncryptionManager
+from app.utils.helpers import mask_account_number
+
+logger = logging.getLogger(__name__)
+
+
+class AccountService:
+    """Business logic service for account operations."""
+    
+    def __init__(self):
+        """Initialize service."""
+        self.repo = AccountRepository()
+        self.encryption = EncryptionManager()
+    
+    def create_savings_account(self, account: SavingsAccountCreate) -> int:
+        """
+        Create a new savings account.
+        
+        Validates:
+        - Age >= 18
+        - Valid DOB format
+        - Valid PIN
+        - Valid phone number
+        - Unique name + DOB combination
+        
+        Args:
+            account: SavingsAccountCreate model
+            
+        Returns:
+            Account number
+            
+        Raises:
+            AgeRestrictionError: If age < 18
+            ValidationError: If validation fails
+            DuplicateConstraintError: If name+DOB exists
+        """
+        # Validate all inputs
+        validate_name(account.name)
+        validate_age(account.date_of_birth, min_age=18)
+        validate_pin(account.pin)
+        validate_phone_number(account.phone_no, country="IN")
+        validate_privilege(account.privilege)
+        
+        # Hash PIN
+        pin_hash = self.encryption.hash_pin(account.pin)
+        
+        # Create account in database
+        account_number = self.repo.create_savings_account(account, pin_hash)
+        
+        logger.info(f"✅ Savings account service created: {account_number}")
+        return account_number
+    
+    def create_current_account(self, account: CurrentAccountCreate) -> int:
+        """
+        Create a new current account.
+        
+        Validates:
+        - Valid PIN
+        - Valid company name
+        - Valid registration number
+        
+        Args:
+            account: CurrentAccountCreate model
+            
+        Returns:
+            Account number
+            
+        Raises:
+            ValidationError: If validation fails
+            DuplicateConstraintError: If registration_no exists
+        """
+        # Validate all inputs
+        validate_name(account.name)
+        validate_pin(account.pin)
+        validate_company_name(account.company_name)
+        validate_registration_number(account.registration_no)
+        validate_privilege(account.privilege)
+        
+        # Hash PIN
+        pin_hash = self.encryption.hash_pin(account.pin)
+        
+        # Create account in database
+        account_number = self.repo.create_current_account(account, pin_hash)
+        
+        logger.info(f"✅ Current account service created: {account_number}")
+        return account_number
+    
+    def get_account_details(self, account_number: int) -> AccountDetailsResponse:
+        """
+        Get account details.
+        
+        Args:
+            account_number: Account number
+            
+        Returns:
+            AccountDetailsResponse
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        return account
+    
+    def get_balance(self, account_number: int) -> float:
+        """
+        Get account balance.
+        
+        Checks that account is active.
+        
+        Args:
+            account_number: Account number
+            
+        Returns:
+            Account balance
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            AccountInactiveError: If account is not active
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        if not account.is_active:
+            raise AccountInactiveError(account_number)
+        
+        return account.balance
+    
+    def verify_pin(self, account_number: int, pin: str) -> bool:
+        """
+        Verify account PIN.
+        
+        Args:
+            account_number: Account number
+            pin: PIN to verify
+            
+        Returns:
+            True if PIN is correct
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            InvalidPinError: If PIN is incorrect
+        """
+        pin_hash = self.repo.get_pin_hash(account_number)
+        
+        if not pin_hash:
+            raise AccountNotFoundError(account_number)
+        
+        if not self.encryption.verify_pin(pin, pin_hash):
+            raise InvalidPinError("PIN verification failed")
+        
+        return True
+    
+    def debit_account(
+        self,
+        account_number: int,
+        amount: float,
+        description: str = "Withdrawal"
+    ) -> bool:
+        """
+        Debit amount from account.
+        
+        Checks:
+        - Account exists and is active
+        - Account is not closed
+        - Sufficient funds
+        
+        Args:
+            account_number: Account to debit
+            amount: Amount (positive value)
+            description: Transaction description
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            AccountInactiveError: If account is inactive
+            AccountClosedError: If account is closed
+            InsufficientFundsError: If insufficient balance
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        if not account.is_active:
+            raise AccountInactiveError(account_number)
+        
+        if account.closed_date is not None:
+            raise AccountClosedError(account_number)
+        
+        if account.balance < amount:
+            raise InsufficientFundsError(account.balance, amount)
+        
+        # Validate amount
+        validate_amount(amount)
+        
+        # Perform debit
+        success = self.repo.debit_account(account_number, amount)
+        
+        if not success:
+            raise InsufficientFundsError(account.balance, amount)
+        
+        logger.info(f"✅ Debit successful for {account_number}: ₹{amount}")
+        return True
+    
+    def credit_account(
+        self,
+        account_number: int,
+        amount: float,
+        description: str = "Deposit"
+    ) -> bool:
+        """
+        Credit amount to account.
+        
+        Checks:
+        - Account exists and is active
+        - Account is not closed
+        
+        Args:
+            account_number: Account to credit
+            amount: Amount (positive value)
+            description: Transaction description
+            
+        Returns:
+            True if successful
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            AccountInactiveError: If account is inactive
+            AccountClosedError: If account is closed
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        if not account.is_active:
+            raise AccountInactiveError(account_number)
+        
+        if account.closed_date is not None:
+            raise AccountClosedError(account_number)
+        
+        # Validate amount
+        validate_amount(amount)
+        
+        # Perform credit
+        success = self.repo.credit_account(account_number, amount)
+        
+        if not success:
+            raise AccountNotFoundError(account_number)
+        
+        logger.info(f"✅ Credit successful for {account_number}: ₹{amount}")
+        return True
+    
+    def update_account(
+        self,
+        account_number: int,
+        update: AccountUpdate
+    ) -> bool:
+        """
+        Update account details.
+        
+        Args:
+            account_number: Account to update
+            update: AccountUpdate model
+            
+        Returns:
+            True if updated
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        # Validate updated fields
+        if update.name:
+            validate_name(update.name)
+        
+        if update.privilege:
+            validate_privilege(update.privilege)
+        
+        # Update in database
+        success = self.repo.update_account(account_number, update)
+        
+        if not success:
+            raise AccountNotFoundError(account_number)
+        
+        logger.info(f"✅ Account updated: {account_number}")
+        return True
+    
+    def activate_account(self, account_number: int) -> bool:
+        """
+        Activate an account.
+        
+        Args:
+            account_number: Account to activate
+            
+        Returns:
+            True if activated
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            AccountAlreadyActiveError: If account is already active
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        # Check if account is already active
+        if account.is_active:
+            raise AccountAlreadyActiveError(account_number)
+        
+        success = self.repo.activate_account(account_number)
+        
+        if not success:
+            raise AccountNotFoundError(account_number)
+        
+        logger.info(f"✅ Account activated: {account_number}")
+        return True
+    
+    def inactivate_account(self, account_number: int) -> bool:
+        """
+        Inactivate an account.
+        
+        Args:
+            account_number: Account to inactivate
+            
+        Returns:
+            True if inactivated
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+            AccountAlreadyInactiveError: If account is already inactive
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        # Check if account is already inactive
+        if not account.is_active:
+            raise AccountAlreadyInactiveError(account_number)
+        
+        success = self.repo.inactivate_account(account_number)
+        
+        if not success:
+            raise AccountNotFoundError(account_number)
+        
+        logger.info(f"✅ Account inactivated: {account_number}")
+        return True
+    
+    def close_account(self, account_number: int) -> bool:
+        """
+        Close an account.
+        
+        Args:
+            account_number: Account to close
+            
+        Returns:
+            True if closed
+            
+        Raises:
+            AccountNotFoundError: If account doesn't exist
+        """
+        account = self.repo.get_account(account_number)
+        
+        if not account:
+            raise AccountNotFoundError(account_number)
+        
+        # Check balance before closing (must be zero or negative)
+        if account.balance > 0:
+            logger.warning(f"⚠️ Account {account_number} has remaining balance: ₹{account.balance}")
+        
+        success = self.repo.close_account(account_number)
+        
+        if not success:
+            raise AccountNotFoundError(account_number)
+        
+        logger.info(f"✅ Account closed: {account_number}")
+        return True
+    
+    def list_accounts(self, limit: int = 100, offset: int = 0) -> List[AccountDetailsResponse]:
+        """
+        List all accounts.
+        
+        Args:
+            limit: Number of records
+            offset: Number to skip
+            
+        Returns:
+            List of accounts
+        """
+        return self.repo.list_accounts(limit, offset)
+    
+    def search_accounts(self, search_term: str) -> List[AccountDetailsResponse]:
+        """
+        Search accounts by name or number.
+        
+        Args:
+            search_term: Name or account number
+            
+        Returns:
+            List of matching accounts
+        """
+        return self.repo.search_accounts(search_term)
